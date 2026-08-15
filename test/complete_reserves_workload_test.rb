@@ -17,7 +17,9 @@ class CompleteReservesWorkloadTest < Minitest::Test
       assert_equal 2, result.fetch("account_intent_count")
       assert_equal 3, result.fetch("object_intent_count")
       assert_equal false, manifest.fetch("private_keys_generated")
-      assert_equal %w[object_type ordinal owner], File.readlines(File.join(directory, "workload", "objects.jsonl"), chomp: true).map { |line| JSON.parse(line).keys.sort }.uniq.first
+      objects = File.readlines(File.join(directory, "workload", "objects.jsonl"), chomp: true).map { |line| JSON.parse(line) }
+      assert_equal %w[controller_ordinal object_type ordinal owner], objects.map { |record| record.keys.sort }.uniq.first
+      assert objects.all? { |record| record.fetch("controller_ordinal").between?(1, 2) }
     end
   end
 
