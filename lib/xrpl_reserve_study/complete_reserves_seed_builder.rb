@@ -60,7 +60,7 @@ module XrplReserveStudy
     private
 
     def require_private_client!
-      unless @client.is_a?(IsolatedTransactionClient) && @client.isolated?
+      unless @client.instance_of?(IsolatedTransactionClient) && @client.frozen? && @client.isolated?
         raise CompleteReservesSeedBuilderError, "isolated transaction client is required"
       end
     end
@@ -161,9 +161,23 @@ module XrplReserveStudy
           recipe.required_amendments.each { |amendment| raise CompleteReservesSeedBuilderError, "required candidate amendment is not active" unless @client.amendment_active?(amendment: amendment) }
           pool.with_signer(role: "account_root", ordinal: object.fetch("controller_ordinal")) do |signer|
             raise CompleteReservesSeedBuilderError, "deterministic runtime signer changed" unless addresses.fetch(object.fetch("controller_ordinal")) == signer.account
-            finalized, used = finalize_submission(prepared.fetch(:limits), started) { @client.submit_recipe(recipe: recipe, owner: signer.account, signer: signer) }
+            reserve_floor = prepared.fetch(:base_reserve_drops) +
+                            prepared.fetch(:allocations).fetch(object.fetch("controller_ordinal")) * prepared.fetch(:owner_reserve_drops)
+            finalized, used = finalize_submission(prepared.fetch(:limits), started) do
+              @client.submit_recipe(
+                recipe: recipe, owner: signer.account, signer: signer,
+                max_fee_drops_per_step: prepared.fetch(:fee_headroom_drops_per_step),
+                reserve_floor_drops: reserve_floor
+              )
+            end
             unless finalized.all? { |record| record.fetch("finality").fetch("fee_drops") <= prepared.fetch(:fee_headroom_drops_per_step) }
               raise CompleteReservesSeedBuilderError, "observed recipe fee exceeds approved headroom"
+            end
+            unless finalized.all? { |record| record.fetch("finality").fetch("account") == signer.account }
+              raise CompleteReservesSeedBuilderError, "observed recipe balance is not bound to the owner"
+            end
+            unless finalized.all? { |record| record.fetch("finality").fetch("account_balance_drops") >= reserve_floor }
+              raise CompleteReservesSeedBuilderError, "observed recipe balance is below required reserve"
             end
             records.concat(finalized)
             attempted += used

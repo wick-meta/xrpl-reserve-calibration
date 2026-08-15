@@ -1,29 +1,216 @@
 # frozen_string_literal: true
 
+require "digest"
+require "ipaddr"
+require "json"
+require "net/http"
+require "openssl"
+require "uri"
+
 module XrplReserveStudy
   class IsolatedTransactionClientError < StudyError; end
 
-  # Connection boundary: implementations must perform their own RPC I/O, but
-  # the adapter only accepts a loopback endpoint after this handshake matches.
+  # Concrete, final connection boundary. It owns one loopback mTLS channel and
+  # performs every authority-bearing RPC on the channel it verified at start.
   class PrivateNetworkConnection
-    def initialize(endpoint_uri:, endpoint_sha256:, client_certificate_sha256:, network_id:)
-      @expected = { "endpoint_uri" => endpoint_uri, "endpoint_sha256" => endpoint_sha256,
-                    "client_certificate_sha256" => client_certificate_sha256, "network_id" => network_id }
-      validate_expected!
-      @expected.each { |key, value| @expected[key] = value.dup.freeze }
-      @expected.freeze
+    MAX_RESPONSE_BYTES = 1_048_576
+
+    class PinnedPersistentHttp < Net::HTTP
+      private
+
+      def begin_transport(request)
+        unavailable = @socket.nil? || @socket.closed?
+        if @last_communicated
+          unavailable ||= @last_communicated + @keep_alive_timeout < Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          unavailable ||= @socket.io.to_io.wait_readable(0) && @socket.eof? unless unavailable
+        end
+        raise IOError, "verified private network channel is closed" if unavailable
+
+        request.update_uri(address, port, use_ssl?)
+        request["host"] ||= addr_port
+      end
+    end
+    private_constant :PinnedPersistentHttp
+
+    def self.inherited(*)
+      raise TypeError, "private network connection is final"
     end
 
-    def expected_identity; @expected; end
-    def handshake; raise NotImplementedError, "private connection must implement handshake"; end
+    def initialize(endpoint_uri:, endpoint_sha256:, client_certificate_sha256:, network_id:,
+                   client_certificate:, client_key:, ca_certificate:,
+                   open_timeout: 5, read_timeout: 30)
+      @uri = validated_uri(endpoint_uri)
+      validate_hash!(endpoint_sha256)
+      validate_hash!(client_certificate_sha256)
+      validate_network_id!(network_id)
+      validate_credentials!(client_certificate, client_key, ca_certificate)
+      unless Digest::SHA256.hexdigest(client_certificate.to_der) == client_certificate_sha256
+        raise IsolatedTransactionClientError, "private network client certificate did not match pinned identity"
+      end
+
+      @lock = Mutex.new
+      @http = build_http(client_certificate, client_key, ca_certificate, open_timeout, read_timeout)
+      @http.start
+      verify_peer!(endpoint_sha256)
+      observed = rpc("private_network_identity", {})
+      unless observed.is_a?(Hash) && observed.keys.sort == %w[client_certificate_sha256 network_id] &&
+             observed["network_id"] == network_id &&
+             observed["client_certificate_sha256"] == client_certificate_sha256
+        raise IsolatedTransactionClientError, "private network live identity did not match pinned identity"
+      end
+
+      @endpoint_identity = {
+        "endpoint_uri" => endpoint_uri.dup.freeze,
+        "endpoint_sha256" => endpoint_sha256.dup.freeze,
+        "client_certificate_sha256" => client_certificate_sha256.dup.freeze,
+        "network_id" => network_id.dup.freeze
+      }.freeze
+      freeze
+    rescue IsolatedTransactionClientError
+      close
+      raise
+    rescue JSON::ParserError, OpenSSL::SSL::SSLError, SocketError, SystemCallError,
+           IOError, Timeout::Error, URI::InvalidURIError => error
+      close
+      raise IsolatedTransactionClientError, "private network TLS connection failed: #{error.class}"
+    end
+
+    def endpoint_identity
+      @endpoint_identity
+    end
+
+    def wallet_propose(passphrase:)
+      rpc("wallet_propose", "passphrase" => passphrase)
+    end
+
+    def fund_account(account:, amount_drops:, root_secret:)
+      rpc("fund_account", "account" => account, "amount_drops" => amount_drops, "root_secret" => root_secret)
+    end
+
+    def submit_recipe(recipe:, owner:, signer:, max_fee_drops_per_step:, reserve_floor_drops:)
+      rpc(
+        "submit_recipe",
+        "recipe_kind" => recipe.kind,
+        "creation_steps" => recipe.creation_steps,
+        "owner" => owner,
+        "signer_secret" => signer.secret,
+        "max_fee_drops_per_step" => max_fee_drops_per_step,
+        "reserve_floor_drops" => reserve_floor_drops
+      )
+    end
+
+    def validated_transaction(hash:)
+      rpc("validated_transaction", "hash" => hash)
+    end
+
+    def ledger_counts(ledger_index:, ledger_hash:)
+      rpc("ledger_counts", "ledger_index" => ledger_index, "ledger_hash" => ledger_hash)
+    end
+
+    def amendment_active?(amendment:)
+      rpc("amendment_active", "amendment" => amendment) == true
+    end
+
+    def resource_snapshot
+      rpc("resource_snapshot", {})
+    end
+
+    def close
+      return unless defined?(@http) && @http
+
+      @lock ? @lock.synchronize { @http.finish if @http.started? } : @http.finish
+    rescue IOError
+      nil
+    end
 
     private
 
-    def validate_expected!
-      uri = @expected.fetch("endpoint_uri")
-      private_uri = uri.is_a?(String) && uri.match?(%r{\Ahttps://(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d+)?/\z})
-      hashes = %w[endpoint_sha256 client_certificate_sha256].all? { |key| @expected[key].is_a?(String) && @expected[key].match?(/\A[a-f0-9]{64}\z/) }
-      raise IsolatedTransactionClientError, "private network connection is invalid" unless private_uri && hashes && @expected["network_id"].is_a?(String) && @expected["network_id"].match?(/\Acandidate-[a-z0-9-]+\z/)
+    def validated_uri(value)
+      uri = URI.parse(value)
+      host = uri.host.to_s.delete_prefix("[").delete_suffix("]")
+      address = IPAddr.new(host)
+      valid = value.is_a?(String) && uri.is_a?(URI::HTTPS) && address.loopback? &&
+              uri.userinfo.nil? && uri.query.nil? && uri.fragment.nil? && uri.path == "/"
+      raise IsolatedTransactionClientError, "private network connection is invalid" unless valid
+
+      uri
+    rescue IPAddr::InvalidAddressError, URI::InvalidURIError, TypeError
+      raise IsolatedTransactionClientError, "private network connection is invalid"
+    end
+
+    def validate_hash!(value)
+      raise IsolatedTransactionClientError, "private network connection is invalid" unless value.is_a?(String) && value.match?(/\A[a-f0-9]{64}\z/)
+    end
+
+    def validate_network_id!(value)
+      raise IsolatedTransactionClientError, "private network connection is invalid" unless value.is_a?(String) && value.match?(/\Acandidate-[a-z0-9-]+\z/)
+    end
+
+    def validate_credentials!(certificate, key, ca_certificate)
+      valid = certificate.is_a?(OpenSSL::X509::Certificate) &&
+              key.is_a?(OpenSSL::PKey::PKey) && certificate.check_private_key(key) &&
+              ca_certificate.is_a?(OpenSSL::X509::Certificate)
+      raise IsolatedTransactionClientError, "private network mTLS credentials are invalid" unless valid
+    end
+
+    def build_http(certificate, key, ca_certificate, open_timeout, read_timeout)
+      raise IsolatedTransactionClientError, "private network timeout is invalid" unless positive_number?(open_timeout) && positive_number?(read_timeout)
+
+      store = OpenSSL::X509::Store.new
+      store.add_cert(ca_certificate)
+      http = PinnedPersistentHttp.new(@uri.host, @uri.port, nil)
+      http.use_ssl = true
+      http.cert = certificate
+      http.key = key
+      http.cert_store = store
+      http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+      http.open_timeout = open_timeout
+      http.read_timeout = read_timeout
+      http.max_retries = 0
+      http
+    end
+
+    def verify_peer!(expected_sha256)
+      peer = @http.peer_cert
+      unless peer.is_a?(OpenSSL::X509::Certificate) && Digest::SHA256.hexdigest(peer.to_der) == expected_sha256
+        raise IsolatedTransactionClientError, "private network TLS peer did not match pinned endpoint"
+      end
+    end
+
+    def rpc(method, params)
+      request = Net::HTTP::Post.new(@uri.request_uri)
+      request["Content-Type"] = "application/json"
+      request["Connection"] = "keep-alive"
+      body = JSON.generate("method" => method, "params" => params)
+      request.body = body
+      response = @lock.synchronize { @http.request(request) }
+      unless response.is_a?(Net::HTTPSuccess) && response.body.is_a?(String) && response.body.bytesize <= MAX_RESPONSE_BYTES
+        raise IsolatedTransactionClientError, "private network RPC response is invalid"
+      end
+      parsed = JSON.parse(response.body)
+      unless parsed.is_a?(Hash) && !parsed.key?("error") && parsed.keys == ["result"]
+        raise IsolatedTransactionClientError, "private network RPC returned an error"
+      end
+
+      parsed.fetch("result")
+    rescue IsolatedTransactionClientError
+      raise
+    rescue JSON::ParserError, OpenSSL::SSL::SSLError, SocketError, SystemCallError,
+           IOError, Timeout::Error => error
+      raise IsolatedTransactionClientError, "private network verified channel failed: #{error.class}"
+    ensure
+      wipe!(body)
+    end
+
+    def positive_number?(value)
+      value.is_a?(Integer) ? value.positive? : value.is_a?(Float) && value.finite? && value.positive?
+    end
+
+    def wipe!(value)
+      return unless value.is_a?(String) && !value.frozen?
+
+      value.bytesize.times { |index| value.setbyte(index, 0) }
+      value.clear
     end
   end
 
@@ -35,14 +222,11 @@ module XrplReserveStudy
     end
 
     def initialize(connection:)
-      raise IsolatedTransactionClientError, "private network connection is required" unless connection.is_a?(PrivateNetworkConnection)
-      observed = connection.handshake
-      expected = connection.expected_identity
-      unless observed.is_a?(Hash) && observed.keys.sort == expected.keys.sort && observed == expected
-        raise IsolatedTransactionClientError, "private network handshake did not match pinned identity"
+      unless connection.instance_of?(PrivateNetworkConnection) && connection.frozen?
+        raise IsolatedTransactionClientError, "verified private network connection is required"
       end
       @connection = connection
-      @endpoint_identity = expected
+      @endpoint_identity = connection.endpoint_identity
       freeze
     end
 
@@ -64,8 +248,12 @@ module XrplReserveStudy
       ledger_counts amendment_active? resource_snapshot
     ].freeze
 
+    def self.inherited(*)
+      raise TypeError, "isolated transaction client is final"
+    end
+
     def initialize(transport:)
-      unless transport.is_a?(PinnedPrivateNetworkTransactionAdapter)
+      unless transport.instance_of?(PinnedPrivateNetworkTransactionAdapter) && transport.frozen?
         raise IsolatedTransactionClientError, "private network transaction adapter is required"
       end
       required = ALLOWED_METHODS - [:isolated?]
@@ -74,6 +262,7 @@ module XrplReserveStudy
       end
       @transport = transport
       @identity = transport.endpoint_identity
+      freeze
     end
 
     def isolated?
@@ -94,7 +283,7 @@ module XrplReserveStudy
       submitted_response!(@transport.fund_account(account: account, amount_drops: amount_drops, root_secret: root_secret))
     end
 
-    def submit_recipe(recipe:, owner:, signer:)
+    def submit_recipe(recipe:, owner:, signer:, max_fee_drops_per_step: nil, reserve_floor_drops: nil)
       ensure_isolated!
       unless recipe.is_a?(OwnerObjectRecipeRegistry::Recipe)
         raise IsolatedTransactionClientError, "owner object recipe is not allowlisted"
@@ -104,7 +293,14 @@ module XrplReserveStudy
         raise IsolatedTransactionClientError, "runtime signer does not match owner"
       end
       require_secret!(signer.secret)
-      response = @transport.submit_recipe(recipe: recipe, owner: owner, signer: signer)
+      unless max_fee_drops_per_step.is_a?(Integer) && max_fee_drops_per_step.positive? &&
+             reserve_floor_drops.is_a?(Integer) && reserve_floor_drops.positive?
+        raise IsolatedTransactionClientError, "recipe fee and reserve limits are invalid"
+      end
+      response = @transport.submit_recipe(
+        recipe: recipe, owner: owner, signer: signer,
+        max_fee_drops_per_step: max_fee_drops_per_step, reserve_floor_drops: reserve_floor_drops
+      )
       steps = response.is_a?(Hash) ? response["steps"] : nil
       unless steps.is_a?(Array) && steps.length == recipe.creation_steps.length
         raise IsolatedTransactionClientError, "isolated recipe submission is invalid"
@@ -121,11 +317,13 @@ module XrplReserveStudy
              %w[tesSUCCESS success].include?(response["engine_result"] || response["result"]) &&
              response["ledger_index"].is_a?(Integer) && response["ledger_index"].positive? && transaction_hash?(response["ledger_hash"]) &&
              response["network_id"] == @identity.fetch("network_id") &&
-             response["fee_drops"].is_a?(Integer) && response["fee_drops"] >= 0
+             response["fee_drops"].is_a?(Integer) && response["fee_drops"] >= 0 &&
+             valid_account?(response["account"]) &&
+             response["account_balance_drops"].is_a?(Integer) && response["account_balance_drops"] >= 0
         raise IsolatedTransactionClientError, "isolated transaction finality is invalid"
       end
 
-      response.slice("hash", "validated", "engine_result", "result", "ledger_index", "ledger_hash", "network_id", "fee_drops").freeze
+      response.slice("hash", "validated", "engine_result", "result", "ledger_index", "ledger_hash", "network_id", "fee_drops", "account", "account_balance_drops").freeze
     end
 
     def ledger_counts(finality:)
