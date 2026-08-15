@@ -3,25 +3,58 @@
 module XrplReserveStudy
   class IsolatedTransactionClientError < StudyError; end
 
-  # The only transport type accepted by state construction. Concrete adapters
-  # bind their RPC implementation to an authenticated, pinned candidate node.
-  class PinnedPrivateNetworkTransactionAdapter
-    IDENTITY_KEYS = %w[adapter_kind authenticated endpoint_sha256 network_id public_endpoint].freeze
-    ADAPTER_KIND = "pinned-private-network-candidate-v1"
+  # Connection boundary: implementations must perform their own RPC I/O, but
+  # the adapter only accepts a loopback endpoint after this handshake matches.
+  class PrivateNetworkConnection
+    def initialize(endpoint_uri:, endpoint_sha256:, client_certificate_sha256:, network_id:)
+      @expected = { "endpoint_uri" => endpoint_uri, "endpoint_sha256" => endpoint_sha256,
+                    "client_certificate_sha256" => client_certificate_sha256, "network_id" => network_id }
+      validate_expected!
+      @expected.each { |key, value| @expected[key] = value.dup.freeze }
+      @expected.freeze
+    end
 
-    def initialize(endpoint_identity:)
-      unless endpoint_identity.is_a?(Hash) && endpoint_identity.keys.sort == IDENTITY_KEYS &&
-             endpoint_identity["adapter_kind"] == ADAPTER_KIND && endpoint_identity["authenticated"] == true &&
-             endpoint_identity["public_endpoint"] == false &&
-             endpoint_identity["endpoint_sha256"].is_a?(String) && endpoint_identity["endpoint_sha256"].match?(/\A[a-f0-9]{64}\z/) &&
-             endpoint_identity["network_id"].is_a?(String) && endpoint_identity["network_id"].match?(/\Acandidate-[a-z0-9-]+\z/)
-        raise IsolatedTransactionClientError, "private network endpoint identity is invalid"
+    def expected_identity; @expected; end
+    def handshake; raise NotImplementedError, "private connection must implement handshake"; end
+
+    private
+
+    def validate_expected!
+      uri = @expected.fetch("endpoint_uri")
+      private_uri = uri.is_a?(String) && uri.match?(%r{\Ahttps://(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d+)?/\z})
+      hashes = %w[endpoint_sha256 client_certificate_sha256].all? { |key| @expected[key].is_a?(String) && @expected[key].match?(/\A[a-f0-9]{64}\z/) }
+      raise IsolatedTransactionClientError, "private network connection is invalid" unless private_uri && hashes && @expected["network_id"].is_a?(String) && @expected["network_id"].match?(/\Acandidate-[a-z0-9-]+\z/)
+    end
+  end
+
+  # Final operation gateway. No subclass can replace its verification or
+  # forward authorities to a separately selected relay.
+  class PinnedPrivateNetworkTransactionAdapter
+    def self.inherited(*)
+      raise TypeError, "pinned private transaction adapter is final"
+    end
+
+    def initialize(connection:)
+      raise IsolatedTransactionClientError, "private network connection is required" unless connection.is_a?(PrivateNetworkConnection)
+      observed = connection.handshake
+      expected = connection.expected_identity
+      unless observed.is_a?(Hash) && observed.keys.sort == expected.keys.sort && observed == expected
+        raise IsolatedTransactionClientError, "private network handshake did not match pinned identity"
       end
-      @endpoint_identity = endpoint_identity.dup.freeze
+      @connection = connection
+      @endpoint_identity = expected
+      freeze
     end
 
     def isolated?; true; end
     def endpoint_identity; @endpoint_identity; end
+    def wallet_propose(**args); @connection.wallet_propose(**args); end
+    def fund_account(**args); @connection.fund_account(**args); end
+    def submit_recipe(**args); @connection.submit_recipe(**args); end
+    def validated_transaction(**args); @connection.validated_transaction(**args); end
+    def ledger_counts(**args); @connection.ledger_counts(**args); end
+    def amendment_active?(**args); @connection.amendment_active?(**args); end
+    def resource_snapshot; @connection.resource_snapshot; end
   end
 
   # Restricts state construction to a small, explicit private-network protocol.

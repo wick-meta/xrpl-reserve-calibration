@@ -24,17 +24,19 @@ module XrplReserveStudy
       authority = secret_reader.call
       raise CompleteReservesSeedBuilderError, "missing signing authority" unless mutable_text?(authority)
 
-      reader_copies = []
       pool = SignerPool.new(profile_id: prepared.fetch(:profile_id), cell_id: prepared.fetch(:cell_id),
-                            authority_reader: -> { copy = authority.dup; reader_copies << copy; copy }, wallet_propose_adapter: @client)
+                            authority_reader: -> { authority.dup }, wallet_propose_adapter: @client)
       records = []
       addresses, attempted = fund_accounts!(prepared, pool, authority, started, records)
       attempted += create_objects!(prepared, pool, addresses, started, records)
       finality = records.last.fetch("finality")
       counts = @client.ledger_counts(finality: finality)
+      enforce_deadline!(prepared.fetch(:limits), started)
       verify_final_counts!(counts, prepared)
       after = measurement("after")
+      enforce_deadline!(prepared.fetch(:limits), started)
       elapsed = monotonic_time - started
+      enforce_deadline!(prepared.fetch(:limits), started)
       raise CompleteReservesSeedBuilderError, "complete reserves seed duration is invalid" unless finite_number?(elapsed) && elapsed >= 0
 
       result = {
@@ -52,7 +54,6 @@ module XrplReserveStudy
     rescue IsolatedTransactionClientError, SignerPoolError, OwnerObjectRecipeRegistryError => error
       raise CompleteReservesSeedBuilderError, error.message
     ensure
-      reader_copies&.each { |copy| wipe!(copy) }
       wipe!(authority)
     end
 
@@ -73,16 +74,17 @@ module XrplReserveStudy
         raise CompleteReservesSeedBuilderError, "workload does not match complete reserves cell"
       end
       controllers = accounts.sort_by { |entry| entry.fetch("ordinal") }
-      allocations, object_counts = validate_objects!(objects, controllers)
+      allocations, object_counts, normalized_objects = validate_objects!(objects, controllers)
       recipes = object_counts.keys.to_h do |kind|
         recipe = @recipe_registry.fetch(kind)
         raise CompleteReservesSeedBuilderError, "unsupported candidate owner object recipe" if recipe == :unsupported_candidate_feature
         [kind, recipe]
       end
       { profile_id: required_text!(cell["profile_id"]), cell_id: required_text!(cell["cell_id"] || cell["run_id"]),
-        accounts: controllers, objects: objects, allocations: allocations, object_counts: object_counts, recipes: recipes,
+        accounts: controllers, objects: normalized_objects, allocations: allocations, object_counts: object_counts, recipes: recipes,
         limits: limits!(cell), base_reserve_drops: drops!(cell, "base_reserve_drops", "base_reserve_xrp"),
-        owner_reserve_drops: drops!(cell, "owner_reserve_drops", "owner_reserve_xrp") }
+        owner_reserve_drops: drops!(cell, "owner_reserve_drops", "owner_reserve_xrp"),
+        fee_headroom_drops_per_step: non_negative_integer!(cell["fee_headroom_drops_per_step"], "fee headroom is required") }
     rescue KeyError, TypeError
       raise CompleteReservesSeedBuilderError, "invalid complete reserves workload"
     end
@@ -96,16 +98,16 @@ module XrplReserveStudy
       ordinals = controllers.map { |entry| entry.fetch("ordinal") }
       allocations = Hash.new(0)
       counts = Hash.new(0)
-      objects.each do |object|
+      normalized = objects.map do |object|
         valid = object.is_a?(Hash) && object["ordinal"].is_a?(Integer) && object["ordinal"].positive? && required_text(object["object_type"]) && required_text(object["owner"])
         raise CompleteReservesSeedBuilderError, "invalid complete reserves owner object" unless valid
         controller = object["controller_ordinal"] || deterministic_controller(object.fetch("owner"), ordinals)
         raise CompleteReservesSeedBuilderError, "invalid complete reserves owner controller" unless ordinals.include?(controller)
-        object["controller_ordinal"] = controller
         allocations[controller] += 1
         counts[object.fetch("object_type")] += 1
+        object.merge("controller_ordinal" => controller).freeze
       end
-      [allocations.freeze, counts.sort.to_h.freeze]
+      [allocations.freeze, counts.sort.to_h.freeze, normalized.freeze]
     end
 
     def deterministic_controller(owner, ordinals)
@@ -128,6 +130,11 @@ module XrplReserveStudy
       raise CompleteReservesSeedBuilderError, "invalid complete reserves reserve"
     end
 
+    def non_negative_integer!(value, message)
+      raise CompleteReservesSeedBuilderError, message unless value.is_a?(Integer) && value >= 0
+      value
+    end
+
     def fund_accounts!(prepared, pool, authority, started, records)
       addresses = {}
       attempted = 0
@@ -135,7 +142,8 @@ module XrplReserveStudy
         batch.each do |account|
           pool.with_signer(role: "account_root", ordinal: account.fetch("ordinal")) do |signer|
             addresses[account.fetch("ordinal")] = signer.account
-            amount = prepared.fetch(:base_reserve_drops) + prepared.fetch(:allocations).fetch(account.fetch("ordinal"), 0) * prepared.fetch(:owner_reserve_drops)
+            object_steps = prepared.fetch(:objects).select { |object| object.fetch("controller_ordinal") == account.fetch("ordinal") }.sum { |object| prepared.fetch(:recipes).fetch(object.fetch("object_type")).creation_steps.length }
+            amount = prepared.fetch(:base_reserve_drops) + prepared.fetch(:allocations).fetch(account.fetch("ordinal"), 0) * prepared.fetch(:owner_reserve_drops) + object_steps * prepared.fetch(:fee_headroom_drops_per_step)
             finalized, used = finalize_submission(prepared.fetch(:limits), started) { @client.fund_account(account: signer.account, amount_drops: amount, root_secret: authority) }
             records.concat(finalized)
             attempted += used
@@ -170,13 +178,26 @@ module XrplReserveStudy
         result = yield
         steps = result.key?("steps") ? result.fetch("steps") : [result]
         records = steps.map do |step|
-          finality = @client.validated_transaction(hash: step.fetch("hash"))
+          finality = poll_finality(step.fetch("hash"), limits, started)
           enforce_deadline!(limits, started)
           { "hash" => step.fetch("hash"), "finality" => finality }.freeze
         end
         return [records, records.length + submissions - 1]
       rescue IsolatedTransactionClientError => error
         retry if submissions <= limits.fetch("max_retries") && before_deadline?(limits, started)
+        raise error
+      end
+    end
+
+    def poll_finality(hash, limits, started)
+      polls = 0
+      begin
+        finality = @client.validated_transaction(hash: hash)
+        enforce_deadline!(limits, started)
+        finality
+      rescue IsolatedTransactionClientError => error
+        polls += 1
+        retry if polls <= limits.fetch("max_retries") && before_deadline?(limits, started)
         raise error
       end
     end

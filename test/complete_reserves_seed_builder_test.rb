@@ -6,25 +6,23 @@ require "fileutils"
 require_relative "../lib/xrpl_reserve_study"
 
 class CompleteReservesSeedBuilderTest < Minitest::Test
-  class IsolatedTransport < XrplReserveStudy::PinnedPrivateNetworkTransactionAdapter
+  class IsolatedTransport < XrplReserveStudy::PrivateNetworkConnection
     attr_reader :funded_accounts, :funding_amounts, :recipes, :fund_calls
 
-    def initialize(isolated: true, class_counts: { "offer" => 1 }, fail_fund: false)
-      super(endpoint_identity: {
-        "adapter_kind" => "pinned-private-network-candidate-v1", "authenticated" => true,
-        "endpoint_sha256" => "b" * 64, "network_id" => "candidate-task3", "public_endpoint" => false
-      })
-      @isolated = isolated
+    def initialize(class_counts: { "offer" => 1 }, fail_fund: false, fail_finality: 0)
+      super(endpoint_uri: "https://127.0.0.1:5005/", endpoint_sha256: "b" * 64,
+            client_certificate_sha256: "c" * 64, network_id: "candidate-task3")
       @funded_accounts = []
       @funding_amounts = []
       @recipes = []
       @fund_calls = 0
       @class_counts = class_counts
       @remaining_fund_failures = fail_fund == true ? 1 : (fail_fund == false ? 0 : Integer(fail_fund))
+      @remaining_finality_failures = fail_finality
       @sequence = 0
     end
 
-    def isolated?; @isolated; end
+    def handshake; expected_identity; end
 
     def wallet_propose(passphrase:)
       { "account_id" => "r#{passphrase[0, 20]}", "secret" => +"runtime-secret-#{passphrase[0, 8]}" }
@@ -47,6 +45,10 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
     end
 
     def validated_transaction(hash:)
+      if @remaining_finality_failures.positive?
+        @remaining_finality_failures -= 1
+        raise XrplReserveStudy::IsolatedTransactionClientError, "ambiguous finality"
+      end
       { "hash" => hash, "validated" => true, "engine_result" => "tesSUCCESS", "ledger_index" => @sequence + 1,
         "ledger_hash" => "F" * 64, "network_id" => "candidate-task3", "fee_drops" => 10 }
     end
@@ -70,7 +72,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
   CELL = {
     "cell_id" => "seed-cell-1", "profile_id" => "complete-reserves-calibrated-v1",
     "account_root_target" => 2, "owned_object_target" => 1,
-    "base_reserve_drops" => 1_000_000, "owner_reserve_drops" => 200_000,
+    "base_reserve_drops" => 1_000_000, "owner_reserve_drops" => 200_000, "fee_headroom_drops_per_step" => 10,
     "execution_limits" => { "max_batch_size" => 2, "max_retries" => 0, "deadline_seconds" => 30 }
   }.freeze
   WORKLOAD = {
@@ -81,7 +83,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
   def test_builds_a_non_counted_seed_state_with_exact_final_counts_and_sanitized_measurements
     transport = IsolatedTransport.new
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: transport), clock: -> { 10.0 }
+      client: client_for(transport), clock: -> { 10.0 }
     )
 
     result = builder.build(cell: CELL, workload: WORKLOAD, secret_reader: -> { +"protected-root-authority" })
@@ -95,13 +97,13 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
     assert_equal 0, result.fetch("released_xrp_drops")
     assert_equal %w[after before], result.fetch("resource_snapshots").map { |entry| entry.fetch("phase") }.sort
     assert_equal %w[offer], transport.recipes
-    assert_equal [1_000_000, 1_200_000], transport.funding_amounts.sort
+    assert_equal [1_000_000, 1_200_010], transport.funding_amounts.sort
   end
 
   def test_rejects_a_public_client_before_reading_the_protected_authority
     read = false
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: IsolatedTransport.new(isolated: false))
+      client: Object.new
     )
 
     error = assert_raises(XrplReserveStudy::CompleteReservesSeedBuilderError) do
@@ -119,7 +121,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
         "classifier_version" => "owner-object-classifier-v1", "account_roots" => 2, "class_counts" => { "offer" => 2 }, "locked_xrp_drops" => 2_400_000, "released_xrp_drops" => 0 }
     end
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: transport), clock: -> { 10.0 }
+      client: client_for(transport), clock: -> { 10.0 }
     )
 
     error = assert_raises(XrplReserveStudy::CompleteReservesSeedBuilderError) do
@@ -133,7 +135,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
     transport = IsolatedTransport.new
     transport.define_singleton_method(:resource_snapshot) { {} }
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: transport), clock: -> { 10.0 }
+      client: client_for(transport), clock: -> { 10.0 }
     )
 
     error = assert_raises(XrplReserveStudy::CompleteReservesSeedBuilderError) do
@@ -146,7 +148,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
   def test_does_not_retry_a_submission_when_the_approved_profile_disallows_retries
     transport = IsolatedTransport.new(fail_fund: true)
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: transport), clock: -> { 10.0 }
+      client: client_for(transport), clock: -> { 10.0 }
     )
 
     assert_raises(XrplReserveStudy::CompleteReservesSeedBuilderError) do
@@ -159,7 +161,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
     authority = +"protected-root-authority"
     transport = IsolatedTransport.new
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: transport), clock: -> { 10.0 }
+      client: client_for(transport), clock: -> { 10.0 }
     )
 
     builder.build(cell: CELL, workload: WORKLOAD, secret_reader: -> { authority })
@@ -171,7 +173,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
     transport = IsolatedTransport.new(fail_fund: 1)
     cell = CELL.merge("execution_limits" => { "max_batch_size" => 2, "max_retries" => 1, "deadline_seconds" => 30 })
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: transport), clock: -> { 10.0 }
+      client: client_for(transport), clock: -> { 10.0 }
     )
 
     result = builder.build(cell: cell, workload: WORKLOAD, secret_reader: -> { +"protected-root-authority" })
@@ -185,7 +187,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
     transport = IsolatedTransport.new
     transport.define_singleton_method(:resource_snapshot) { { "rss_bytes" => Float::NAN } }
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: transport), clock: -> { 10.0 }
+      client: client_for(transport), clock: -> { 10.0 }
     )
 
     error = assert_raises(XrplReserveStudy::CompleteReservesSeedBuilderError) do
@@ -208,7 +210,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
     cell = CELL.merge("account_root_target" => 2, "owned_object_target" => 3)
     transport = IsolatedTransport.new(class_counts: { "offer" => 2, "trust_line" => 1 })
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: transport), clock: -> { 10.0 }
+      client: client_for(transport), clock: -> { 10.0 }
     )
 
     result = builder.build(cell: cell, workload: workload, secret_reader: -> { +"protected-root-authority" })
@@ -226,7 +228,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
     }
     transport = IsolatedTransport.new(class_counts: { "xchain_owned_create_account_claim_id" => 1 })
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: transport), clock: -> { 10.0 }
+      client: client_for(transport), clock: -> { 10.0 }
     )
 
     result = builder.build(cell: CELL, workload: compound, secret_reader: -> { +"protected-root-authority" })
@@ -239,7 +241,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
     ticks = [0.0, 0.0, 0.0, 2.0]
     cell = CELL.merge("execution_limits" => { "max_batch_size" => 2, "max_retries" => 0, "deadline_seconds" => 1.0 })
     builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(
-      client: XrplReserveStudy::IsolatedTransactionClient.new(transport: IsolatedTransport.new), clock: -> { ticks.shift || 2.0 }
+      client: client_for(IsolatedTransport.new), clock: -> { ticks.shift || 2.0 }
     )
 
     error = assert_raises(XrplReserveStudy::CompleteReservesSeedBuilderError) do
@@ -247,5 +249,36 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
     end
 
     assert_equal "complete reserves seed deadline exceeded", error.message
+  end
+
+  def test_polls_an_ambiguous_finality_without_resubmitting_the_funded_account
+    transport = IsolatedTransport.new(fail_finality: 1)
+    cell = CELL.merge("execution_limits" => { "max_batch_size" => 2, "max_retries" => 1, "deadline_seconds" => 30 })
+    builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(client: client_for(transport), clock: -> { 10.0 })
+
+    result = builder.build(cell: cell, workload: WORKLOAD, secret_reader: -> { +"protected-root-authority" })
+
+    assert_equal 2, transport.fund_calls
+    assert_equal 3, result.fetch("attempted_transactions")
+  end
+
+  def test_accepts_a_frozen_legacy_workload_without_mutating_it
+    workload = {
+      "accounts" => WORKLOAD.fetch("accounts").map(&:dup).map(&:freeze).freeze,
+      "objects" => [{ "ordinal" => 1, "object_type" => "offer", "owner" => "legacy-owner" }.freeze].freeze
+    }.freeze
+    builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(client: client_for(IsolatedTransport.new), clock: -> { 10.0 })
+
+    result = builder.build(cell: CELL, workload: workload, secret_reader: -> { +"protected-root-authority" })
+
+    assert_equal 3, result.fetch("validated_transactions")
+    refute workload.fetch("objects").first.key?("controller_ordinal")
+  end
+
+  private
+
+  def client_for(connection)
+    adapter = XrplReserveStudy::PinnedPrivateNetworkTransactionAdapter.new(connection: connection)
+    XrplReserveStudy::IsolatedTransactionClient.new(transport: adapter)
   end
 end

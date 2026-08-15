@@ -30,7 +30,7 @@ class DeterministicSignerPoolTest < Minitest::Test
     pool = XrplReserveStudy::SignerPool.new(
       profile_id: "complete-reserves-calibrated-v1",
       cell_id: "cell-001",
-      authority_reader: -> { authority },
+      authority_reader: -> { authority.dup },
       wallet_propose_adapter: adapter
     )
 
@@ -52,7 +52,7 @@ class DeterministicSignerPoolTest < Minitest::Test
     authority = +"runtime-authority"
     adapter = CapturingWalletProposeAdapter.new
     pool = XrplReserveStudy::SignerPool.new(
-      profile_id: "profile", cell_id: "cell", authority_reader: -> { authority }, wallet_propose_adapter: adapter
+      profile_id: "profile", cell_id: "cell", authority_reader: -> { authority.dup }, wallet_propose_adapter: adapter
     )
 
     pool.with_signer(role: "owner", ordinal: 0) { |_signer| :first }
@@ -69,7 +69,7 @@ class DeterministicSignerPoolTest < Minitest::Test
     authority = +"runtime-authority"
     adapter = CapturingWalletProposeAdapter.new
     pool = XrplReserveStudy::SignerPool.new(
-      profile_id: "profile", cell_id: "cell", authority_reader: -> { authority }, wallet_propose_adapter: adapter
+      profile_id: "profile", cell_id: "cell", authority_reader: -> { authority.dup }, wallet_propose_adapter: adapter
     )
 
     assert_raises(RuntimeError) { pool.with_signer(role: "owner", ordinal: 0) { raise "boom" } }
@@ -137,5 +137,21 @@ class DeterministicSignerPoolTest < Minitest::Test
 
     assert_equal "wallet_propose adapter is not allowlisted", error.message
     refute read
+  end
+
+  def test_wipes_each_reader_result_immediately_across_many_signers
+    authority = +"runtime-authority"
+    copies = []
+    adapter = CapturingWalletProposeAdapter.new
+    pool = XrplReserveStudy::SignerPool.new(
+      profile_id: "profile", cell_id: "cell",
+      authority_reader: -> { copy = authority.dup; copies << copy; copy }, wallet_propose_adapter: adapter
+    )
+
+    20.times { |ordinal| pool.with_signer(role: "owner", ordinal: ordinal) { |_signer| } }
+
+    assert_equal "runtime-authority", authority
+    assert_equal 20, copies.length
+    assert copies.all?(&:empty?)
   end
 end

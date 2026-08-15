@@ -50,6 +50,7 @@ module XrplReserveStudy
       record_audit(context, account)
       yield Signer.new(account: account, secret: secret, context: context)
     ensure
+      wipe!(authority)
       wipe!(authority_buffer)
       wipe!(passphrase)
       wipe!(secret)
