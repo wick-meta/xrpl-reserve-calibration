@@ -37,7 +37,7 @@ required for evidence acquisition.
 Exit gate: one provenance-bound bundle passes the repository's schema checks
 and is labelled `operator_local`. Exact agreement from another operator is
 recorded as `independently_corroborated`, but is not required to proceed. This
-gate is tracked in [issue #32](https://github.com/wick-meta/xrpl-reserve-calibration/issues/32).
+gate is tracked in [the current prerequisite issue](https://github.com/wick-meta/xrpl-reserve-calibration/issues/2).
 
 The serial public-RPC `ledger_data` collector is a correctness reference only.
 It has no reliable remaining-page estimate and may fail at ordinary gateway
@@ -60,7 +60,7 @@ limits; a partial scan cannot satisfy this phase.
 
 Exit gate: every planned run has a disposition, predeclared thresholds and
 uncertainty are evaluated, and the replication outcome is documented. This
-phase is tracked in [issue #3](https://github.com/wick-meta/xrpl-reserve-calibration/issues/3) and is blocked by Phase 1.
+phase is blocked by Phase 1 and is tracked through this roadmap until an execution issue is opened.
 
 ## Phase 3 — economic and ecosystem analysis
 
@@ -74,8 +74,7 @@ phase is tracked in [issue #3](https://github.com/wick-meta/xrpl-reserve-calibra
 
 Exit gate: calculations reproduce from committed inputs, material objections
 have dispositions, and the analysis remains traceable to the frozen
-distribution and Phase 2 results. This phase is tracked in
-[issue #4](https://github.com/wick-meta/xrpl-reserve-calibration/issues/4).
+distribution and Phase 2 results. It is tracked through this roadmap until an analysis issue is opened.
 
 ## Phase 4 — decision and contribution
 
@@ -92,4 +91,4 @@ distribution and Phase 2 results. This phase is tracked in
    voting, and activation as separate later states.
 
 Exit gate: the public contribution is traceable to a released evidence bundle.
-This phase is tracked in [issue #5](https://github.com/wick-meta/xrpl-reserve-calibration/issues/5).
+It is tracked through this roadmap until a decision issue is opened.

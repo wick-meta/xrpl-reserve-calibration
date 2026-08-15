@@ -23,13 +23,13 @@ Pull requests should be small enough to review, contain tests for changed behavi
 
 ## Complete-reserves distribution contributions
 
-The current prerequisite is [issue #32](https://github.com/wick-meta/xrpl-reserve-calibration/issues/32): a frozen current-state distribution for one validated ledger. One declared operator may create an `operator_local` bundle and use it for a reproducible local study. A matching report from another declared operator upgrades the bundle to `independently_corroborated`; it is encouraged but not required. This is a read-only contribution. It must not submit transactions or disclose database access, credentials, private infrastructure details, wallet material, or personal data.
+The current prerequisite is [the current prerequisite issue](https://github.com/wick-meta/xrpl-reserve-calibration/issues/2): a frozen current-state distribution for one validated ledger. One declared operator may create an `operator_local` bundle and use it for a reproducible local study. A matching report from another declared operator upgrades the bundle to `independently_corroborated`; it is encouraged but not required. This is a read-only contribution. It must not submit transactions or disclose database access, credentials, private infrastructure details, wallet material, or personal data.
 
 An acceptable imported operator report contains only:
 
 1. the validated ledger index and ledger hash;
 2. the declared operator identity and dataset type;
-3. the dataset type, classifier version, and source commit captured by the importer;
+3. the classifier version and source commit captured by the importer;
 4. SHA-256 values for the local query and its result;
 5. `AccountRoot` total and owner-object totals by class; and
 6. enough provenance for another operator to reproduce the same normalized counts at the same hash, if they choose to do so.
