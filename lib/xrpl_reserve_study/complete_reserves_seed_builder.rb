@@ -84,7 +84,7 @@ module XrplReserveStudy
         accounts: controllers, objects: normalized_objects, allocations: allocations, object_counts: object_counts, recipes: recipes,
         limits: limits!(cell), base_reserve_drops: drops!(cell, "base_reserve_drops", "base_reserve_xrp"),
         owner_reserve_drops: drops!(cell, "owner_reserve_drops", "owner_reserve_xrp"),
-        fee_headroom_drops_per_step: non_negative_integer!(cell["fee_headroom_drops_per_step"], "fee headroom is required") }
+        fee_headroom_drops_per_step: positive_integer!(cell["fee_headroom_drops_per_step"], "positive fee headroom is required") }
     rescue KeyError, TypeError
       raise CompleteReservesSeedBuilderError, "invalid complete reserves workload"
     end
@@ -130,8 +130,8 @@ module XrplReserveStudy
       raise CompleteReservesSeedBuilderError, "invalid complete reserves reserve"
     end
 
-    def non_negative_integer!(value, message)
-      raise CompleteReservesSeedBuilderError, message unless value.is_a?(Integer) && value >= 0
+    def positive_integer!(value, message)
+      raise CompleteReservesSeedBuilderError, message unless value.is_a?(Integer) && value.positive?
       value
     end
 
@@ -162,6 +162,9 @@ module XrplReserveStudy
           pool.with_signer(role: "account_root", ordinal: object.fetch("controller_ordinal")) do |signer|
             raise CompleteReservesSeedBuilderError, "deterministic runtime signer changed" unless addresses.fetch(object.fetch("controller_ordinal")) == signer.account
             finalized, used = finalize_submission(prepared.fetch(:limits), started) { @client.submit_recipe(recipe: recipe, owner: signer.account, signer: signer) }
+            unless finalized.all? { |record| record.fetch("finality").fetch("fee_drops") <= prepared.fetch(:fee_headroom_drops_per_step) }
+              raise CompleteReservesSeedBuilderError, "observed recipe fee exceeds approved headroom"
+            end
             records.concat(finalized)
             attempted += used
           end
@@ -172,21 +175,22 @@ module XrplReserveStudy
 
     def finalize_submission(limits, started)
       submissions = 0
-      begin
-        enforce_deadline!(limits, started)
-        submissions += 1
-        result = yield
-        steps = result.key?("steps") ? result.fetch("steps") : [result]
-        records = steps.map do |step|
-          finality = poll_finality(step.fetch("hash"), limits, started)
+      result = begin
+        begin
           enforce_deadline!(limits, started)
-          { "hash" => step.fetch("hash"), "finality" => finality }.freeze
+          submissions += 1
+          yield
+        rescue IsolatedTransactionClientError => error
+          retry if submissions <= limits.fetch("max_retries") && before_deadline?(limits, started)
+          raise error
         end
-        return [records, records.length + submissions - 1]
-      rescue IsolatedTransactionClientError => error
-        retry if submissions <= limits.fetch("max_retries") && before_deadline?(limits, started)
-        raise error
       end
+      steps = result.key?("steps") ? result.fetch("steps") : [result]
+      records = steps.map do |step|
+        finality = poll_finality(step.fetch("hash"), limits, started)
+        { "hash" => step.fetch("hash"), "finality" => finality }.freeze
+      end
+      [records, records.length + submissions - 1]
     end
 
     def poll_finality(hash, limits, started)

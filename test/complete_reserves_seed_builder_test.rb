@@ -9,7 +9,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
   class IsolatedTransport < XrplReserveStudy::PrivateNetworkConnection
     attr_reader :funded_accounts, :funding_amounts, :recipes, :fund_calls
 
-    def initialize(class_counts: { "offer" => 1 }, fail_fund: false, fail_finality: 0)
+    def initialize(class_counts: { "offer" => 1 }, fail_fund: false, fail_finality: 0, fee_drops: 10)
       super(endpoint_uri: "https://127.0.0.1:5005/", endpoint_sha256: "b" * 64,
             client_certificate_sha256: "c" * 64, network_id: "candidate-task3")
       @funded_accounts = []
@@ -19,6 +19,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
       @class_counts = class_counts
       @remaining_fund_failures = fail_fund == true ? 1 : (fail_fund == false ? 0 : Integer(fail_fund))
       @remaining_finality_failures = fail_finality
+      @fee_drops = fee_drops
       @sequence = 0
     end
 
@@ -50,7 +51,7 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
         raise XrplReserveStudy::IsolatedTransactionClientError, "ambiguous finality"
       end
       { "hash" => hash, "validated" => true, "engine_result" => "tesSUCCESS", "ledger_index" => @sequence + 1,
-        "ledger_hash" => "F" * 64, "network_id" => "candidate-task3", "fee_drops" => 10 }
+        "ledger_hash" => "F" * 64, "network_id" => "candidate-task3", "fee_drops" => @fee_drops }
     end
 
     def ledger_counts(ledger_index:, ledger_hash:)
@@ -273,6 +274,33 @@ class CompleteReservesSeedBuilderTest < Minitest::Test
 
     assert_equal 3, result.fetch("validated_transactions")
     refute workload.fetch("objects").first.key?("controller_ordinal")
+  end
+
+  def test_never_resubmits_after_two_ambiguous_finality_failures
+    transport = IsolatedTransport.new(fail_finality: 2)
+    cell = CELL.merge("execution_limits" => { "max_batch_size" => 2, "max_retries" => 1, "deadline_seconds" => 30 })
+    builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(client: client_for(transport), clock: -> { 10.0 })
+
+    assert_raises(XrplReserveStudy::CompleteReservesSeedBuilderError) do
+      builder.build(cell: cell, workload: WORKLOAD, secret_reader: -> { +"protected-root-authority" })
+    end
+    assert_equal 1, transport.fund_calls
+  end
+
+  def test_rejects_zero_or_undersized_recipe_fee_headroom
+    zero = CELL.merge("fee_headroom_drops_per_step" => 0)
+    high_fee = IsolatedTransport.new(fee_drops: 11)
+    builder = XrplReserveStudy::CompleteReservesSeedBuilder.new(client: client_for(high_fee), clock: -> { 10.0 })
+
+    zero_error = assert_raises(XrplReserveStudy::CompleteReservesSeedBuilderError) do
+      builder.build(cell: zero, workload: WORKLOAD, secret_reader: -> { +"protected-root-authority" })
+    end
+    headroom_error = assert_raises(XrplReserveStudy::CompleteReservesSeedBuilderError) do
+      builder.build(cell: CELL, workload: WORKLOAD, secret_reader: -> { +"protected-root-authority" })
+    end
+
+    assert_equal "positive fee headroom is required", zero_error.message
+    assert_equal "observed recipe fee exceeds approved headroom", headroom_error.message
   end
 
   private
