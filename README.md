@@ -98,7 +98,7 @@ The complete sequence and its gates are in [docs/roadmap.md](docs/roadmap.md). M
 
 The complete-reserves capacity study is intentionally disabled until its
 frozen input distribution exists. The immediate public contribution is
-[issue #32](https://github.com/wick-meta/xrpl-reserve-calibration/issues/32):
+[the current prerequisite issue](https://github.com/wick-meta/xrpl-reserve-calibration/issues/2):
 an operator with an indexed XRPL dataset can produce a reproducible,
 hash-bound aggregate report for the study. A second matching operator report
 is welcome as corroboration, but is not required to use the framework. A
