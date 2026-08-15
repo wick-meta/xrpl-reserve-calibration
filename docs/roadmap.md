@@ -45,17 +45,25 @@ limits; a partial scan cannot satisfy this phase.
 
 ## Phase 2 — controlled complete-reserves capacity experiment
 
-1. Bind the frozen Phase 1 distribution to the disabled authorization record
-   and require review before any signing authority can be read.
-2. Use the commit-pinned, isolated-network harness with synthetic execution
+1. Implement and test deterministic AccountRoot and owner-object population
+   construction, verified fresh-state snapshots/clones, bounded scheduling,
+   recovery, and sanitized artifact publication.
+2. Measure a realistic, explicitly non-counted calibration profile before
+   estimating full provisioning time or considering authorization. Its results
+   cannot be pooled with the full matrix.
+3. Bind the frozen Phase 1 distribution to the still-disabled authorization
+   record and require review before any signing authority can be read.
+4. Only after the execution model is reviewed and separately authorized, use
+   the commit-pinned isolated-network harness with synthetic execution
    authority, resource ceilings, timeouts, and explicit abort rules.
-3. Execute the predeclared 120-run matrix: 48 base-reserve cells, 48
+5. Execute the predeclared 120-run matrix: 48 base-reserve cells, 48
    owner-reserve cells, and 24 combined corner cells, each repeated three
-   times.
-4. Preserve successes, failures, exclusions, logs, metrics, environment
-   manifests, and checksums. Do not pool results across candidate versions or
-   environments.
-5. Reproduce a representative subset on a second environment and state
+   times. Its timed warmup-and-measurement floor is 70 serial hours, excluding
+   measured provisioning, snapshot/clone, recovery, and retry time.
+6. Preserve successes, failures, exclusions, logs, metrics, environment
+   manifests, and checksums. Do not pool results across candidate versions,
+   profiles, or environments.
+7. Reproduce a representative subset on a second environment and state
    whether it was maintainer-performed or independently performed.
 
 Exit gate: every planned run has a disposition, predeclared thresholds and

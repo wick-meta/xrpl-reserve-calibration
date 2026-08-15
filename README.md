@@ -19,6 +19,42 @@ report. A matching report from another operator upgrades the bundle to
 `independently_corroborated`; it is not required to use the framework. This
 remains read-only and never submits to a public network.
 
+## What works now / what is not yet executable
+
+### Works now
+
+- An operator can create and import a hash-bound, exact-ledger owner-object
+  distribution from its own indexed Clio, `rippled`, or database dataset. This
+  path is read-only, can remain entirely local, and does not require a second
+  operator to use the framework.
+- The bounded private-network pilot has been exercised at its deliberately
+  small, non-counted scope. It is an isolated mechanism check, not a reserve
+  recommendation or capacity result.
+- The deterministic study inputs, distribution classifier, model, safety
+  checks, schemas, and offline validation are available for review and reuse.
+
+### Not yet executable
+
+- The complete-reserves 120-run matrix is a frozen study design, **not** a
+  turnkey executor. It remains disabled, has no full population/snapshot/clone
+  executor, and has collected no counted capacity evidence.
+- The matrix's five-minute warmup and thirty-minute measurement window impose
+  a **70-hour serial timed minimum** (120 runs × 35 minutes). Population
+  construction, verified snapshots/clones, recovery, and retries are extra;
+  their duration is intentionally not claimed until a calibrated run measures
+  them.
+- Neither the existing authorization record nor this documentation authorizes
+  a full-matrix run. A full executor must first prove deterministic population
+  construction, equivalent fresh state for repetitions, bounded resource use,
+  recovery, and artifact integrity in a realistic non-counted calibration.
+
+This staging protects the operator and the study's validity, not XRPL Mainnet:
+capacity work is limited to an isolated private network. Until the execution
+model is measured, a large run could exhaust the operator's CPU, memory, disk,
+or I/O; fail to create equivalent starting states; or yield invalid comparisons
+because a partial clone, workload, or recovery changed one run's conditions.
+No public-network reserve-study transactions are permitted.
+
 ## Current status
 
 | Capability | State |

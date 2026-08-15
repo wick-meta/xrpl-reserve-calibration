@@ -27,6 +27,34 @@ must report the distribution evidence tier and snapshot construction
 calibration separately from capacity evidence, and must never pool results
 across environments.
 
+### Execution readiness and staged enablement
+
+The 120-run matrix has a fixed serial timed minimum of 70 hours: each run has
+a five-minute warmup and a thirty-minute measurement window. That minimum does
+not include constructing the population, creating and validating a fresh-state
+snapshot or clone for each repetition, controlled recovery, or an allowed
+retry. The project does not claim a provisioning duration until it has measured
+one in an isolated non-counted calibration.
+
+The full matrix is therefore a frozen design, not a currently runnable
+executor. Its authorization remains disabled until an implementation has
+demonstrated all of the following at a realistic, explicitly non-counted
+scope:
+
+1. deterministic construction of AccountRoots and each supported owner-object
+   family;
+2. verified, equivalent fresh state for every repeated run, without direct
+   database injection;
+3. bounded disk, memory, CPU, I/O, transaction, and retry behavior;
+4. controlled reset and recovery; and
+5. complete, sanitized, integrity-bound result artifacts.
+
+This is an operator and evidence-quality safeguard, not a Mainnet safeguard.
+All transaction-capable capacity work is restricted to an isolated private
+network. Without measured provisioning and clone behavior, a large run could
+exhaust local resources or compare non-equivalent states, neither of which is
+valid reserve-policy evidence.
+
 The earlier version-1 base-reserve matrix remains preserved as historical,
 base-only work. Its 72-run shape and non-counted pilot do not replace the
 frozen owner-object distribution, the 120-run complete-reserves matrix, or
