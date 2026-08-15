@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:counted-execution-authorization-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "authorized", "study_sha256", "pilot_result_sha256", "run_order_sha256", "candidate_release", "candidate_image_digest"],
+  "properties": {
+    "schema_version": {"const": "counted-execution-authorization-v1"},
+    "authorized": {"const": false},
+    "study_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "pilot_result_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "run_order_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "candidate_release": {"const": "3.3.0"},
+    "candidate_image_digest": {"const": "xrpllabsofficial/xrpld@sha256:353d5e016bb93519e9fcac715cdc8c2205b96c4cfe2d1f0f1d22a22f6efaff70"}
+  }
+}

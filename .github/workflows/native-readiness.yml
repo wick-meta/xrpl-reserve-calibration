@@ -1,0 +1,43 @@
+name: Native readiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  amd64-preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # master, 2026-07-22
+        with:
+          ruby-version: "3.3"
+      - name: Pull the immutable candidate image
+        run: docker pull --platform linux/amd64 xrpllabsofficial/xrpld@sha256:353d5e016bb93519e9fcac715cdc8c2205b96c4cfe2d1f0f1d22a22f6efaff70
+      - name: Verify native readiness only
+        run: |
+          set +e
+          output="$(bin/capacity-harness doctor 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -eq 2
+          printf '%s\n' "$output" | grep -F 'native_architecture_eligible=true'
+          printf '%s\n' "$output" | grep -F 'counted_run_ready=false'
+      - name: Validate exact pilot inputs
+        run: |
+          bin/reserve-study validate
+          bin/reserve-study capacity-config --run-id r0500000-a000010000-n01
+          bin/reserve-study capacity-workload --run-id r0500000-a000010000-n01 --pilot-accounts 3
+          bin/reserve-study capacity-run-manifest --run-id r0500000-a000010000-n01 --pilot-accounts 3

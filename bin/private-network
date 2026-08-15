@@ -1,0 +1,201 @@
+#!/bin/sh
+set -eu
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+compose_file="$project_dir/capacity/private-network/compose.yml"
+image_ref='xrpllabsofficial/xrpld@sha256:353d5e016bb93519e9fcac715cdc8c2205b96c4cfe2d1f0f1d22a22f6efaff70'
+checkout_digest=$(ruby -rdigest -e 'print Digest::SHA256.hexdigest(ARGV.fetch(0))[0, 12]' "$project_dir")
+project_name="xrpl-reserve-private-$checkout_digest"
+runtime_root="$project_dir/capacity/runtime/private-network"
+
+compose() {
+  XRPL_PRIVATE_NETWORK_RUNTIME="$runtime_root" docker compose \
+    --project-name "$project_name" --file "$compose_file" "$@"
+}
+
+require_docker() {
+  command -v docker >/dev/null 2>&1 || { echo "Docker is unavailable" >&2; exit 1; }
+  docker compose version >/dev/null 2>&1 || { echo "Docker Compose is unavailable" >&2; exit 1; }
+}
+
+ensure_runtime_absent() {
+  if [ -e "$runtime_root" ] || [ -L "$runtime_root" ]; then
+    echo "private-network runtime already exists; run reset with explicit confirmation" >&2
+    exit 1
+  fi
+}
+
+prepare() {
+  require_docker
+  ensure_runtime_absent
+  mkdir -p "$runtime_root"
+  trap 'rm -rf "$runtime_root"' EXIT HUP INT TERM
+
+  mkdir -p "$runtime_root/validator-1/config" "$runtime_root/validator-2/config" "$runtime_root/validator-3/config"
+  for ordinal in 1 2 3; do
+    docker run --platform linux/amd64 --rm --entrypoint /usr/bin/validator-keys \
+      -v "$runtime_root:/keys" "$image_ref" \
+      create_keys --keyfile "/keys/validator-$ordinal-keys.json" >/dev/null
+  done
+
+  public_keys=""
+  for ordinal in 1 2 3; do
+    public_key=$(ruby -rjson -e 'puts JSON.parse(File.read(ARGV.fetch(0))).fetch("public_key")' \
+      "$runtime_root/validator-$ordinal-keys.json")
+    public_keys="$public_keys$public_key\n"
+  done
+  printf '%b' "[validators]\n$public_keys" > "$runtime_root/validators.txt"
+
+  for ordinal in 1 2 3; do
+    docker run --platform linux/amd64 --rm --entrypoint /usr/bin/validator-keys \
+      -v "$runtime_root:/keys" "$image_ref" \
+      create_token --keyfile "/keys/validator-$ordinal-keys.json" \
+      > "$runtime_root/validator-$ordinal-token.txt"
+    token=$(sed -n '6,13p' "$runtime_root/validator-$ordinal-token.txt" | tr -d '\r\n')
+    test -n "$token"
+    cat > "$runtime_root/validator-$ordinal/config/rippled.cfg" <<EOF
+[server]
+port_rpc_admin_local
+port_peer
+
+[port_rpc_admin_local]
+port = 5005
+ip = 127.0.0.1
+admin = 127.0.0.1
+protocol = http
+
+[port_peer]
+port = 51235
+ip = 0.0.0.0
+protocol = peer
+
+[node_size]
+small
+
+[node_db]
+type=NuDB
+path=/var/lib/xrpld/db/nudb
+
+[database_path]
+/var/lib/xrpld/db
+
+[debug_logfile]
+/var/log/xrpld/debug.log
+
+[ledger_history]
+256
+
+[network_id]
+21339
+
+[ips_fixed]
+validator_1 51235
+validator_2 51235
+validator_3 51235
+
+[validators_file]
+/config/validators.txt
+
+[validator_token]
+$token
+
+[amendment_majority_time]
+15 minutes
+
+[rpc_startup]
+{ "command": "log_level", "severity": "warning" }
+EOF
+    cp "$runtime_root/validators.txt" "$runtime_root/validator-$ordinal/config/validators.txt"
+    chmod 600 "$runtime_root/validator-$ordinal-keys.json" "$runtime_root/validator-$ordinal-token.txt"
+  done
+  trap - EXIT HUP INT TERM
+  echo "private network prepared"
+}
+
+up() {
+  require_docker
+  test -d "$runtime_root" || { echo "run prepare first" >&2; exit 1; }
+  compose up --detach --wait
+}
+
+json_rpc() {
+  service=$1
+  request=$2
+  compose exec --no-TTY "$service" /usr/bin/wget -qO- \
+    --header='Content-Type: application/json' --post-data="$request" \
+    http://127.0.0.1:5005/
+}
+
+verify() {
+  require_docker
+  for ordinal in 1 2 3; do
+    service="validator_$ordinal"
+    info=$(json_rpc "$service" '{"method":"server_info","params":[{}]}')
+    feature=$(json_rpc "$service" '{"method":"feature","params":[{"feature":"Sponsor"}]}')
+    ruby -rjson -e '
+      info = JSON.parse(ARGV.fetch(0)).fetch("result").fetch("info")
+      feature_result = JSON.parse(ARGV.fetch(1)).fetch("result")
+      feature = feature_result.values.find { |value| value.is_a?(Hash) && value["name"] == "Sponsor" }
+      abort "Sponsor feature response missing" unless feature
+      abort "validator is not proposing" unless info.fetch("server_state") == "proposing"
+      abort "validator peer count is not 2" unless info.fetch("peers") == 2
+      abort "Sponsor is not active" unless feature.fetch("name") == "Sponsor" && feature.fetch("supported") == true && feature.fetch("enabled") == true
+      puts "#{info.fetch("build_version")} #{info.fetch("validated_ledger").fetch("seq")} Sponsor=enabled"
+    ' "$info" "$feature"
+  done
+}
+
+request_sponsor_activation() {
+  require_docker
+  test -d "$runtime_root" || { echo "run prepare first" >&2; exit 1; }
+  for ordinal in 1 2 3; do
+    compose exec --no-TTY "validator_$ordinal" /usr/bin/xrpld --rpc \
+      --rpc_ip 127.0.0.1:5005 feature Sponsor accept >/dev/null
+  done
+  echo "Sponsor votes requested; run verify after the configured majority window"
+}
+
+wait_for_sponsor() {
+  require_docker
+  test -d "$runtime_root" || { echo "run prepare first" >&2; exit 1; }
+  attempts=0
+  while [ "$attempts" -lt 80 ]; do
+    if verify >/tmp/xrpl-private-network-verify.$$ 2>/dev/null; then
+      cat /tmp/xrpl-private-network-verify.$$
+      rm -f /tmp/xrpl-private-network-verify.$$
+      return 0
+    fi
+    rm -f /tmp/xrpl-private-network-verify.$$
+    attempts=$((attempts + 1))
+    sleep 15
+  done
+  echo "Sponsor did not activate within 20 minutes" >&2
+  return 1
+}
+
+down() {
+  require_docker
+  compose down
+}
+
+reset() {
+  require_docker
+  test "${XRPL_PRIVATE_NETWORK_CONFIRM_RESET:-0}" = 1 || {
+    echo "reset requires XRPL_PRIVATE_NETWORK_CONFIRM_RESET=1" >&2
+    exit 64
+  }
+  compose down --volumes --remove-orphans || true
+  ruby -rfileutils -e 'FileUtils.remove_entry_secure(ARGV.fetch(0)) if File.exist?(ARGV.fetch(0))' "$runtime_root"
+  echo "private network reset"
+}
+
+case "${1:-}" in
+  prepare) prepare ;;
+  up) up ;;
+  verify) verify ;;
+  activate) request_sponsor_activation ;;
+  wait) wait_for_sponsor ;;
+  down) down ;;
+  reset) reset ;;
+  *) echo "usage: bin/private-network {prepare|up|verify|activate|wait|down|reset}" >&2; exit 64 ;;
+esac

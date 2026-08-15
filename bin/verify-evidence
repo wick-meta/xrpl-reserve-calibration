@@ -1,0 +1,31 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "digest"
+require "pathname"
+
+root = File.expand_path("..", __dir__)
+manifests = Dir[File.join(root, "evidence", "**", "SHA256SUMS")].sort
+verified = 0
+
+manifests.each do |manifest|
+  directory = File.dirname(manifest)
+  File.readlines(manifest, chomp: true).each_with_index do |line, index|
+    match = line.match(/\A([a-f0-9]{64})  (.+)\z/)
+    abort "#{manifest}:#{index + 1}: malformed checksum line" unless match
+
+    relative = Pathname.new(match[2])
+    if relative.absolute? || relative.each_filename.any? { |part| part == ".." }
+      abort "#{manifest}:#{index + 1}: unsafe artifact path"
+    end
+
+    artifact = File.join(directory, relative.to_s)
+    abort "#{manifest}:#{index + 1}: artifact not found" unless File.file?(artifact)
+
+    actual = Digest::SHA256.file(artifact).hexdigest
+    abort "#{manifest}:#{index + 1}: checksum mismatch" unless actual == match[1]
+    verified += 1
+  end
+end
+
+puts "verified #{verified} evidence artifacts across #{manifests.length} manifests"

@@ -1,0 +1,44 @@
+services:
+  rippled:
+    image: xrpllabsofficial/xrpld@sha256:353d5e016bb93519e9fcac715cdc8c2205b96c4cfe2d1f0f1d22a22f6efaff70
+    platform: linux/amd64
+    user: "997:997"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mkdir -p /var/lib/xrpld/db/nudb /var/log/xrpld &&
+        exec /usr/bin/xrpld --conf /config/rippled.cfg --standalone
+    restart: "no"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 16g
+    cpus: 4.0
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    volumes:
+      - ${XRPL_CAPACITY_CONFIG_DIR:-./config}:/config:ro
+      - capacity_data:/var/lib/xrpld
+      - capacity_logs:/var/log/xrpld
+    networks:
+      capacity_internal:
+        ipv4_address: 172.30.38.2
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--header=Content-Type: application/json", "--post-data={\"method\":\"server_info\",\"params\":[{}]}", "http://127.0.0.1:5005/"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+networks:
+  capacity_internal:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.38.0/29
+
+volumes:
+  capacity_data:
+  capacity_logs:

@@ -1,0 +1,60 @@
+services:
+  validator_1:
+    image: xrpllabsofficial/xrpld@sha256:353d5e016bb93519e9fcac715cdc8c2205b96c4cfe2d1f0f1d22a22f6efaff70
+    platform: linux/amd64
+    user: "997:997"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mkdir -p /var/lib/xrpld/db/nudb /var/log/xrpld &&
+        exec /usr/bin/xrpld --conf /config/rippled.cfg --start --net
+    restart: "no"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 2.0
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    volumes:
+      - ${XRPL_PRIVATE_NETWORK_RUNTIME:?prepare first}/validator-1/config:/config:ro
+      - private_network_data_1:/var/lib/xrpld
+      - private_network_logs_1:/var/log/xrpld
+    networks: [private_network]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--header=Content-Type: application/json", "--post-data={\"method\":\"server_info\",\"params\":[{}]}", "http://127.0.0.1:5005/"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  validator_2:
+    extends:
+      service: validator_1
+    volumes:
+      - ${XRPL_PRIVATE_NETWORK_RUNTIME:?prepare first}/validator-2/config:/config:ro
+      - private_network_data_2:/var/lib/xrpld
+      - private_network_logs_2:/var/log/xrpld
+
+  validator_3:
+    extends:
+      service: validator_1
+    volumes:
+      - ${XRPL_PRIVATE_NETWORK_RUNTIME:?prepare first}/validator-3/config:/config:ro
+      - private_network_data_3:/var/lib/xrpld
+      - private_network_logs_3:/var/log/xrpld
+
+networks:
+  private_network:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.39.0/29
+
+volumes:
+  private_network_data_1:
+  private_network_data_2:
+  private_network_data_3:
+  private_network_logs_1:
+  private_network_logs_2:
+  private_network_logs_3:

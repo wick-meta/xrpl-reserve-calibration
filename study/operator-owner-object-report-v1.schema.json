@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Operator owner-object aggregate report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "operator_id", "dataset_type", "ledger_index", "ledger_hash", "query_sha256", "result_sha256", "classifier_version", "account_roots", "class_counts"],
+  "properties": {
+    "schema_version": { "const": "operator-owner-object-report-v1" },
+    "operator_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+    "dataset_type": { "enum": ["clio", "rippled", "operator_database"] },
+    "ledger_index": { "type": "integer", "minimum": 1 },
+    "ledger_hash": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
+    "query_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "result_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "classifier_version": { "const": "owner-object-classifier-v1" },
+    "account_roots": { "type": "integer", "minimum": 1 },
+    "class_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "check": { "type": "integer", "minimum": 0 },
+        "deposit_preauthorization": { "type": "integer", "minimum": 0 },
+        "escrow": { "type": "integer", "minimum": 0 },
+        "nftoken_offer": { "type": "integer", "minimum": 0 },
+        "nftoken_page": { "type": "integer", "minimum": 0 },
+        "offer": { "type": "integer", "minimum": 0 },
+        "oracle": { "type": "integer", "minimum": 0 },
+        "payment_channel": { "type": "integer", "minimum": 0 },
+        "signer_list": { "type": "integer", "minimum": 0 },
+        "ticket": { "type": "integer", "minimum": 0 },
+        "trust_line": { "type": "integer", "minimum": 0 },
+        "amm": { "type": "integer", "minimum": 0 },
+        "credential": { "type": "integer", "minimum": 0 },
+        "did": { "type": "integer", "minimum": 0 },
+        "mptoken": { "type": "integer", "minimum": 0 },
+        "mpt_issuance": { "type": "integer", "minimum": 0 },
+        "permissioned_domain": { "type": "integer", "minimum": 0 },
+        "delegate": { "type": "integer", "minimum": 0 },
+        "xchain_owned_claim_id": { "type": "integer", "minimum": 0 },
+        "xchain_owned_create_account_claim_id": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "operator_evidence_url": { "type": "string", "pattern": "^https://" }
+  }
+}

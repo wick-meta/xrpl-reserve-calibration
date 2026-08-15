@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wick-meta/xrpl-reserve-calibration/blob/main/schemas/capacity-record-v1.schema.json",
+  "title": "Capacity run record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "study_id",
+    "source_commit",
+    "run_id",
+    "status",
+    "base_reserve_xrp",
+    "account_count",
+    "repetition",
+    "started_at",
+    "finished_at",
+    "environment",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": { "const": "capacity-record-v1" },
+    "study_id": { "type": "string", "minLength": 1 },
+    "source_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["passed", "failed", "aborted", "excluded"] },
+    "exclusion_reason": { "type": ["string", "null"] },
+    "base_reserve_xrp": { "type": "number", "exclusiveMinimum": 0 },
+    "account_count": { "type": "integer", "minimum": 1 },
+    "repetition": { "type": "integer", "minimum": 1 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "environment": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": { "type": ["number", "null"] }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "excluded" } } },
+      "then": { "required": ["exclusion_reason"] }
+    }
+  ]
+}

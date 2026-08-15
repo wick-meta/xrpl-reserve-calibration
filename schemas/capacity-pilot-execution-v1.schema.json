@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:capacity-pilot-execution-v1",
+  "title": "Sanitized non-counted pilot transaction execution",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "execution_scope", "run_id", "ordinal", "destination_account",
+    "measurement_sample_sequence", "transaction_hash", "preliminary_result", "final_result",
+    "validated_ledger_index", "validated_ledger_hash", "destination_accountroot_verified",
+    "status", "counted_run"
+  ],
+  "properties": {
+    "schema_version": { "const": "capacity-pilot-execution-v1" },
+    "execution_scope": { "const": "non-counted-pilot" },
+    "run_id": { "const": "r0500000-a000010000-n01" },
+    "ordinal": { "type": "integer", "minimum": 1, "maximum": 3 },
+    "destination_account": { "type": "string", "pattern": "^r[1-9A-HJ-NP-Za-km-z]{24,34}(?![\\s\\S])" },
+    "measurement_sample_sequence": { "enum": [1, 450, 900] },
+    "transaction_hash": { "$ref": "#/$defs/transaction_hash" },
+    "preliminary_result": { "const": "tesSUCCESS" },
+    "final_result": { "const": "tesSUCCESS" },
+    "validated_ledger_index": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+    "validated_ledger_hash": { "$ref": "#/$defs/ledger_hash" },
+    "destination_accountroot_verified": { "const": true },
+    "status": { "const": "validated-success" },
+    "counted_run": { "const": false }
+  },
+  "allOf": [
+    { "oneOf": [
+      { "properties": { "ordinal": { "const": 1 }, "measurement_sample_sequence": { "const": 1 } } },
+      { "properties": { "ordinal": { "const": 2 }, "measurement_sample_sequence": { "const": 450 } } },
+      { "properties": { "ordinal": { "const": 3 }, "measurement_sample_sequence": { "const": 900 } } }
+    ] }
+  ],
+  "$defs": {
+    "transaction_hash": { "type": "string", "pattern": "^[A-F0-9]{64}(?![\\s\\S])" },
+    "ledger_hash": { "type": "string", "pattern": "^[A-F0-9]{64}(?![\\s\\S])" }
+  }
+}

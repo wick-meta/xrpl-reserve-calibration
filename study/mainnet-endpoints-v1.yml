@@ -1,0 +1,27 @@
+schema_version: mainnet-endpoint-manifest-v1
+minimum_required_operators: 2
+independence_rule: required-endpoints-have-distinct-operator-ids-documented-by-primary-public-server-registry
+selection_rule: minimum-latest-validated-ledger
+health_gate:
+  max_validated_ledger_age_seconds: 120
+  max_latest_ledger_spread: 50
+  allowed_server_states:
+    - full
+    - proposing
+    - validating
+    - tracking
+endpoints:
+  - endpoint_id: honeycluster-mainnet
+    operator_id: honeycluster
+    url: https://honeycluster.io/
+    operator_evidence_url: https://xrpl.org/docs/tutorials/public-servers
+  - endpoint_id: ripple-full-history-mainnet
+    operator_id: ripple
+    url: https://s2.ripple.com:51234/
+    operator_evidence_url: https://xrpl.org/docs/tutorials/public-servers
+optional_endpoints:
+  - endpoint_id: inftf-mainnet
+    operator_id: inftf
+    url: https://xrplcluster.com/
+    operator_evidence_url: https://xrpl.org/docs/tutorials/public-servers
+    inclusion_rule: move-to-endpoints-through-reviewed-manifest-change-when-healthy

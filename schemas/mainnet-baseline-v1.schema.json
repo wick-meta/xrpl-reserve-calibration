@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wick-meta/xrpl-reserve-calibration/blob/main/schemas/mainnet-baseline-v1.schema.json",
+  "title": "Mainnet baseline observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "observed_at",
+    "endpoint",
+    "ledger_index",
+    "ledger_hash",
+    "reserve_base_xrp",
+    "reserve_increment_xrp",
+    "method_allowlist"
+  ],
+  "properties": {
+    "schema_version": { "const": "mainnet-baseline-v1" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "endpoint": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "ledger_index": { "type": "integer", "minimum": 1 },
+    "ledger_hash": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "reserve_base_xrp": { "type": "number", "exclusiveMinimum": 0 },
+    "reserve_increment_xrp": { "type": "number", "minimum": 0 },
+    "method_allowlist": {
+      "type": "array",
+      "prefixItems": [{ "const": "server_info" }, { "const": "ledger" }],
+      "minItems": 2,
+      "maxItems": 2
+    }
+  }
+}

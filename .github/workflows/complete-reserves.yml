@@ -1,0 +1,25 @@
+name: Complete reserves guarded matrix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authorization-preflight:
+    runs-on: ubuntu-24.04
+    environment: complete-reserves
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Confirm matrix remains disabled before secret access
+        run: |
+          set +e
+          bin/reserve-study complete-reserves-matrix
+          status=$?
+          set -e
+          test "$status" -eq 1

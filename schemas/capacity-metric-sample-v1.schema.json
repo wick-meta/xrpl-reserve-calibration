@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wick-meta/xrpl-reserve-calibration/blob/main/schemas/capacity-metric-sample-v1.schema.json",
+  "title": "Capacity metric sample",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "phase", "sample_sequence", "elapsed_seconds", "validated_ledger_index",
+    "validated_ledger_hash", "ledger_close_time", "ledger_state_bytes", "database_bytes",
+    "resident_memory_bytes", "memory_current_bytes", "memory_limit_bytes", "process_cpu_seconds",
+    "allocated_logical_cpus", "free_disk_bytes", "disk_total_bytes"
+  ],
+  "properties": {
+    "schema_version": { "const": "capacity-metric-sample-v1" },
+    "phase": { "enum": ["post-warmup", "measurement"] },
+    "sample_sequence": { "type": "integer", "minimum": 0 },
+    "elapsed_seconds": { "type": "number", "minimum": 0 },
+    "validated_ledger_index": { "type": "integer", "minimum": 1 },
+    "validated_ledger_hash": { "type": "string", "pattern": "^[A-F0-9]{64}(?![\\s\\S])" },
+    "ledger_close_time": { "type": "integer", "minimum": 0 },
+    "ledger_state_bytes": { "type": "integer", "minimum": 0 },
+    "database_bytes": { "type": "integer", "minimum": 0 },
+    "resident_memory_bytes": { "type": "integer", "minimum": 0 },
+    "memory_current_bytes": { "type": "integer", "minimum": 0 },
+    "memory_limit_bytes": { "const": 17179869184 },
+    "process_cpu_seconds": { "type": "number", "minimum": 0 },
+    "allocated_logical_cpus": { "const": 4 },
+    "free_disk_bytes": { "type": "integer", "minimum": 0 },
+    "disk_total_bytes": { "type": "integer", "exclusiveMinimum": 0 }
+  }
+}

@@ -1,0 +1,22 @@
+# Copy this file outside the repository, replace the placeholders, then pass it
+# with: bin/reserve-study complete-reserves-distribution --endpoints /safe/path/operator-local.yml
+#
+# A complete single-operator capture is valid operator_local evidence. A second
+# matching report can later upgrade the evidence tier to independently_corroborated.
+schema_version: owner-object-endpoint-manifest-v1
+minimum_required_operators: 1
+selection_rule: minimum-latest-validated-ledger
+health_gate:
+  max_validated_ledger_age_seconds: 120
+  max_latest_ledger_spread: 50
+  allowed_server_states:
+    - full
+    - proposing
+    - validating
+    - tracking
+endpoints:
+  - endpoint_id: replace-with-stable-endpoint-id
+    operator_id: replace-with-declared-operator-id
+    url: https://replace-with-operator-endpoint.example/
+# operator_evidence_url is optional. Add a public provenance page only when
+# publishing an aggregate report and it does not disclose private infrastructure.

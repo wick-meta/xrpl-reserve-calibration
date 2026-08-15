@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:complete-reserves-study-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "study_id", "status", "random_seed", "base_reserve_options_xrp", "owner_reserve_options_xrp", "evidence_scales", "combined_scales", "repetitions", "warmup_seconds", "measurement_seconds"],
+  "properties": {
+    "schema_version": {"const": "complete-reserves-study-v1"},
+    "study_id": {"const": "complete-reserves-v1"},
+    "status": {"const": "frozen-before-counted-execution"},
+    "random_seed": {"type": "integer", "minimum": 1},
+    "base_reserve_options_xrp": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "uniqueItems": true},
+    "owner_reserve_options_xrp": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "uniqueItems": true},
+    "evidence_scales": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "uniqueItems": true},
+    "combined_scales": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "uniqueItems": true},
+    "repetitions": {"type": "integer", "minimum": 1},
+    "warmup_seconds": {"type": "integer", "minimum": 1},
+    "measurement_seconds": {"type": "integer", "minimum": 1}
+  }
+}

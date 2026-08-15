@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Methodology discussion
+    url: https://github.com/wick-meta/xrpl-reserve-calibration/discussions
+    about: Ask questions and discuss research design.
+  - name: Private security report
+    url: https://github.com/wick-meta/xrpl-reserve-calibration/security/advisories/new
+    about: Report vulnerabilities confidentially.

@@ -1,0 +1,25 @@
+schema_version: complete-reserves-study-v1
+study_id: complete-reserves-v1
+status: frozen-before-counted-execution
+random_seed: 260814
+base_reserve_options_xrp:
+  - 1.0
+  - 0.5
+  - 0.25
+  - 0.1
+owner_reserve_options_xrp:
+  - 0.2
+  - 0.1
+  - 0.05
+  - 0.02
+evidence_scales:
+  - 1.0
+  - 1.25
+  - 1.5
+  - 2.0
+combined_scales:
+  - 1.5
+  - 2.0
+repetitions: 3
+warmup_seconds: 300
+measurement_seconds: 1800

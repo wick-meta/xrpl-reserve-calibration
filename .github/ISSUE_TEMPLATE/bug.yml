@@ -1,0 +1,35 @@
+name: Reproducible defect
+description: Report incorrect tool behaviour with a minimal reproduction.
+title: "bug: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, wallet seeds, personal data, or private infrastructure details.
+  - type: input
+    id: commit
+    attributes:
+      label: Source commit
+      placeholder: 40-character commit hash
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest deterministic command sequence and sanitized inputs.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed secrets, seeds, personal data, and private infrastructure details.
+          required: true

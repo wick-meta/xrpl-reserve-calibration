@@ -1,0 +1,15 @@
+{
+  "schema_version": "operator-owner-object-report-v1",
+  "operator_id": "replace-with-operator-id",
+  "dataset_type": "clio",
+  "ledger_index": 106285742,
+  "ledger_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "query_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "result_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "classifier_version": "owner-object-classifier-v1",
+  "account_roots": 8,
+  "class_counts": {
+    "offer": 5,
+    "trust_line": 3
+  }
+}

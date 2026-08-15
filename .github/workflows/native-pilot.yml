@@ -1,0 +1,99 @@
+name: Native non-counted pilot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-pilot-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pilot:
+    runs-on: ubuntu-24.04
+    environment: reserve-pilot
+    timeout-minutes: 55
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # master, 2026-07-22
+        with:
+          ruby-version: "3.3"
+
+      - name: Pull the immutable candidate image
+        run: docker pull --platform linux/amd64 xrpllabsofficial/xrpld@sha256:353d5e016bb93519e9fcac715cdc8c2205b96c4cfe2d1f0f1d22a22f6efaff70
+
+      - name: Verify native readiness
+        run: |
+          set +e
+          output="$(bin/capacity-harness doctor 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -eq 2
+          printf '%s\n' "$output" | grep -F 'native_architecture_eligible=true'
+          printf '%s\n' "$output" | grep -F 'counted_run_ready=false'
+
+      - name: Prepare exact pilot inputs
+        run: |
+          bin/reserve-study validate
+          bin/reserve-study capacity-config --run-id r0500000-a000010000-n01
+          bin/reserve-study capacity-workload --run-id r0500000-a000010000-n01 --pilot-accounts 3
+          bin/reserve-study capacity-run-manifest --run-id r0500000-a000010000-n01 --pilot-accounts 3
+
+      - name: Verify candidate identity boundary
+        run: |
+          set +e
+          bin/capacity-harness up-candidate r0500000-a000010000-n01
+          up_status=$?
+          verify_status=1
+          if test "$up_status" -eq 0; then
+            bin/capacity-harness verify-candidate r0500000-a000010000-n01
+            verify_status=$?
+          fi
+          if test "$up_status" -ne 0 || test "$verify_status" -ne 0; then
+            for container in $(docker ps -a --filter label=com.docker.compose.service=rippled --format '{{.ID}}'); do
+              docker inspect "$container" --format 'state={{json .State}} image={{.Config.Image}} command={{json .Config.Cmd}}' || true
+              docker logs "$container" 2>&1 || true
+            done
+          fi
+          if test "$up_status" -eq 0 && test "$verify_status" -eq 0; then
+            container="$(docker ps --filter label=com.docker.compose.service=rippled --format '{{.ID}}' | head -n 1)"
+            docker exec "$container" sh -c 'id; printf "memory.max="; cat /sys/fs/cgroup/memory.max; printf "memory.current="; cat /sys/fs/cgroup/memory.current; stat -c "config=%A %U:%G file=%A %U:%G" /config /config/rippled.cfg; stat -c "data=%A %U:%G" /var/lib/xrpld /var/lib/xrpld/db; df -B1 /var/lib/xrpld' || true
+          fi
+          XRPL_CAPACITY_CONFIRM_RESET=1 bin/capacity-harness reset
+          reset_status=$?
+          set -e
+          test "$up_status" -eq 0
+          test "$verify_status" -eq 0
+          test "$reset_status" -eq 0
+
+      - name: Run protected non-counted pilot
+        env:
+          XRPL_STANDALONE_GENESIS: ${{ secrets.XRPL_STANDALONE_GENESIS }}
+        run: |
+          set +x
+          test -n "$XRPL_STANDALONE_GENESIS"
+          authority_hash="$(printf '%s' "$XRPL_STANDALONE_GENESIS" | sha256sum | cut -d' ' -f1)"
+          test "$authority_hash" = "97380bed40c76b624c97982ed49a1962550d74dfa990a5075f8824feedadc95b"
+          printf '%s\n' "$XRPL_STANDALONE_GENESIS" |
+            bin/reserve-study capacity-non-counted-pilot \
+              --run-id r0500000-a000010000-n01 \
+              --pilot-accounts 3 \
+              --secret-stdin
+          unset XRPL_STANDALONE_GENESIS
+
+      - name: Upload sanitized pilot artifacts
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-non-counted-pilot-${{ github.run_id }}
+          path: capacity/runtime/r0500000-a000010000-n01/execution/non-counted-pilot-000000003/
+          if-no-files-found: error
+          retention-days: 14

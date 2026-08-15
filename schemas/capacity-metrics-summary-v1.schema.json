@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wick-meta/xrpl-reserve-calibration/blob/main/schemas/capacity-metrics-summary-v1.schema.json",
+  "title": "Capacity metrics summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "metric_protocol_version", "sample_count", "post_warmup_ledger_index",
+    "measurement_end_ledger_index", "measurement_elapsed_seconds", "metrics", "resource_minima",
+    "thresholds", "thresholds_passed", "abort_rule_breaches"
+  ],
+  "properties": {
+    "schema_version": { "const": "capacity-metrics-summary-v1" },
+    "metric_protocol_version": { "const": "capacity-metrics-protocol-v1" },
+    "sample_count": { "type": "integer", "minimum": 1 },
+    "post_warmup_ledger_index": { "type": "integer", "minimum": 1 },
+    "measurement_end_ledger_index": { "type": "integer", "minimum": 1 },
+    "measurement_elapsed_seconds": { "type": "number", "minimum": 1800 },
+    "metrics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ledger_bytes", "database_bytes", "resident_memory_bytes", "cpu_utilization_ratio", "ledger_close_seconds", "transaction_success_ratio", "recovery_seconds"],
+      "properties": {
+        "ledger_bytes": { "type": "integer", "minimum": 0 },
+        "database_bytes": { "type": "integer", "minimum": 0 },
+        "resident_memory_bytes": { "type": "integer", "minimum": 0 },
+        "cpu_utilization_ratio": { "type": "number", "minimum": 0 },
+        "ledger_close_seconds": {
+          "type": "object", "additionalProperties": false,
+          "required": ["count", "minimum", "maximum", "p50", "p95"],
+          "properties": {
+            "count": { "type": "integer", "minimum": 1 },
+            "minimum": { "type": "number", "minimum": 0 },
+            "maximum": { "type": "number", "minimum": 0 },
+            "p50": { "type": "number", "minimum": 0 },
+            "p95": { "type": "number", "minimum": 0 }
+          }
+        },
+        "transaction_success_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "recovery_seconds": { "type": "number", "minimum": 0 }
+      }
+    },
+    "resource_minima": {
+      "type": "object", "additionalProperties": false,
+      "required": ["free_memory_ratio", "free_disk_ratio", "free_disk_bytes"],
+      "properties": {
+        "free_memory_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "free_disk_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "free_disk_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "thresholds": {
+      "type": "object", "additionalProperties": false,
+      "required": ["transaction_success_ratio_min", "ledger_close_seconds_p95_max", "recovery_seconds_max", "required_free_memory_ratio_min", "required_free_disk_ratio_min"],
+      "properties": {
+        "transaction_success_ratio_min": { "$ref": "#/$defs/transaction_success_ratio_min" },
+        "ledger_close_seconds_p95_max": { "$ref": "#/$defs/ledger_close_seconds_p95_max" },
+        "recovery_seconds_max": { "$ref": "#/$defs/recovery_seconds_max" },
+        "required_free_memory_ratio_min": { "$ref": "#/$defs/required_free_memory_ratio_min" },
+        "required_free_disk_ratio_min": { "$ref": "#/$defs/required_free_disk_ratio_min" }
+      }
+    },
+    "thresholds_passed": { "type": "boolean" },
+    "abort_rule_breaches": { "type": "array", "items": { "enum": ["ledger-close-seconds", "resident-memory-bytes", "free-disk-bytes"] }, "uniqueItems": true }
+  },
+  "$defs": {
+    "transaction_success_ratio_min": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operator", "limit", "observed", "passed"],
+      "properties": {
+        "operator": { "const": ">=" },
+        "limit": { "const": 0.99 },
+        "observed": { "type": "number" },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "ledger_close_seconds_p95_max": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operator", "limit", "observed", "passed"],
+      "properties": {
+        "operator": { "const": "<=" },
+        "limit": { "const": 5.0 },
+        "observed": { "type": "number" },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "recovery_seconds_max": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operator", "limit", "observed", "passed"],
+      "properties": {
+        "operator": { "const": "<=" },
+        "limit": { "const": 300 },
+        "observed": { "type": "number" },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "required_free_memory_ratio_min": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operator", "limit", "observed", "passed"],
+      "properties": {
+        "operator": { "const": ">=" },
+        "limit": { "const": 0.10 },
+        "observed": { "type": "number" },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "required_free_disk_ratio_min": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operator", "limit", "observed", "passed"],
+      "properties": {
+        "operator": { "const": ">=" },
+        "limit": { "const": 0.10 },
+        "observed": { "type": "number" },
+        "passed": { "type": "boolean" }
+      }
+    }
+  }
+}

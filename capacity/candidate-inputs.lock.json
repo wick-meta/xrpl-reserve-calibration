@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "inputs": {
+    "study/reserve-calibration-v1.yml": {
+      "sha256": "4d00f2bd5c8a189be7f215c94e7baf9f455dc663429c509ae16ced95fda5c216"
+    },
+    "capacity/config/rippled.cfg": {
+      "sha256": "6741c93ecd8ef84ffd06684e6701411604042b46e77fd8555dfa0860f86813ef"
+    },
+    "study/protocol-alignment-v1.yml": {
+      "sha256": "502959e92d30b587b638535b0955070446cd9235bfdd26d2310fe44c6f32574c"
+    },
+    "capacity/pilot-protocol-v1.yml": {
+      "sha256": "259c453e1149444634782d078d583fc76e77af18dc276b9c80af9f3d7183ac2b"
+    }
+  }
+}

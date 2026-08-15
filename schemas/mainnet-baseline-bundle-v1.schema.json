@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wick-meta/xrpl-reserve-calibration/blob/main/schemas/mainnet-baseline-bundle-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source_commit", "captured_at", "selection_rule", "target_ledger_index", "status", "preflight", "failures", "observations"],
+  "properties": {
+    "schema_version": { "const": "mainnet-baseline-bundle-v1" },
+    "source_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "selection_rule": { "const": "minimum-latest-validated-ledger" },
+    "target_ledger_index": { "type": ["integer", "null"], "minimum": 1 },
+    "status": { "enum": ["agreed", "disagreement", "preflight_rejected", "capture_failed"] },
+    "preflight": { "type": "array", "minItems": 2, "items": { "type": "object" } },
+    "failures": { "type": "array", "items": { "type": "object" } },
+    "observations": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["endpoint_id", "operator_id", "operator_evidence_url", "endpoint", "ledger_index", "ledger_hash", "reserve_base_drops", "reserve_increment_drops", "fee_settings_index", "server_info_sha256", "fee_settings_sha256"],
+        "properties": {
+          "endpoint_id": { "type": "string", "minLength": 1 },
+          "operator_id": { "type": "string", "minLength": 1 },
+          "operator_evidence_url": { "type": "string", "format": "uri" },
+          "endpoint": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "ledger_index": { "type": "integer", "minimum": 1 },
+          "ledger_hash": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
+          "reserve_base_drops": { "type": "integer", "minimum": 0 },
+          "reserve_increment_drops": { "type": "integer", "minimum": 0 },
+          "fee_settings_index": { "const": "4BC50C9B0D8515D3EAAE1E74B29A95804346C491EE1A95BF25E4AAB854A6A651" },
+          "server_info_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "fee_settings_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "agreed" } } },
+      "then": {
+        "properties": {
+          "target_ledger_index": { "type": "integer" },
+          "observations": { "minItems": 2 }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+schema_version: capacity-pilot-protocol-v1
+study_id: reserve-calibration-v1
+status: frozen-before-live-pilot
+pilot_scope: non-counted-pilot
+candidate_specific: true
+candidate_release: 3.3.0
+workload_name: accountroot-create-and-hold-v1
+representative_run_id: r0500000-a000010000-n01
+pilot_accounts: 3
+warmup_seconds: 300
+measurement_seconds: 1800
+sample_cadence_seconds: 2
+sample_cadence_basis: between-ledger-advancements
+post_warmup_sample_count: 1
+measurement_sample_count: 900
+total_sample_count: 901
+ledger_advancements_per_measurement_step: 1
+transaction_type: Payment
+scheduled_transactions_per_step: 1
+scheduled_step_operation_order:
+  - sign-one-payment
+  - submit-one-payment
+  - advance-one-standalone-ledger
+unscheduled_transactions_per_step: 0
+unscheduled_step_operation: advance-one-standalone-ledger-without-transaction
+sample_capture_stage: after-ledger-advancement
+validated_ledger_binding: exact-index-and-hash
+runtime_pacing:
+  target_cadence_seconds: 2.0
+  target_mode: absolute-monotonic
+  maximum_target_lateness_seconds: 1.0
+  observed_boundary: ledger-advancement-completion
+  consecutive_completion_interval_seconds:
+    minimum: 1.0
+    maximum: 3.0
+  scheduled_preparation_stage: before-target
+transaction_schedule:
+  - ordinal: 1
+    measurement_sample_sequence: 1
+  - ordinal: 2
+    measurement_sample_sequence: 450
+  - ordinal: 3
+    measurement_sample_sequence: 900
+controlled_restart:
+  starts_after_measurement_sample: 900
+  recovery_seconds_max: 300
+  poll_scope: verified-candidate-only
+  recovery_success_condition: validated-ledger-tracking-resumed
+success_requirements:
+  - three-validated-successful-attempts
+  - exactly-901-schema-valid-ordered-samples
+  - schema-valid-metrics-summary
+  - no-abort-rule-breach
+  - all-predeclared-thresholds-passed
+  - controlled-restart-recovery-validated
+  - confirmed-reset
+  - exact-source-manifest-environment-bindings
+native_execution_established: false
+counted_execution_authorized: false
+cross_version_pooling_allowed: false
+cross_version_generalization_allowed: false

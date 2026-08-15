@@ -1,0 +1,64 @@
+{
+  "schema_version": "capacity-metrics-summary-v1",
+  "metric_protocol_version": "capacity-metrics-protocol-v1",
+  "sample_count": 900,
+  "post_warmup_ledger_index": 2,
+  "measurement_end_ledger_index": 902,
+  "measurement_elapsed_seconds": 1801.5252493359997,
+  "metrics": {
+    "ledger_bytes": 8535,
+    "database_bytes": 6871850,
+    "resident_memory_bytes": 482226176,
+    "cpu_utilization_ratio": 0.0009700113837672206,
+    "ledger_close_seconds": {
+      "count": 900,
+      "minimum": 1.8423122510000667,
+      "maximum": 3.5569479679999745,
+      "p50": 1.9998075490000247,
+      "p95": 2.027184808000129
+    },
+    "transaction_success_ratio": 1.0,
+    "recovery_seconds": 2.244405985999947
+  },
+  "resource_minima": {
+    "free_memory_ratio": 0.9746735095977783,
+    "free_disk_ratio": 0.5992812453491864,
+    "free_disk_bytes": 92825182208
+  },
+  "thresholds": {
+    "transaction_success_ratio_min": {
+      "operator": ">=",
+      "limit": 0.99,
+      "observed": 1.0,
+      "passed": true
+    },
+    "ledger_close_seconds_p95_max": {
+      "operator": "<=",
+      "limit": 5.0,
+      "observed": 2.027184808000129,
+      "passed": true
+    },
+    "recovery_seconds_max": {
+      "operator": "<=",
+      "limit": 300,
+      "observed": 2.244405985999947,
+      "passed": true
+    },
+    "required_free_memory_ratio_min": {
+      "operator": ">=",
+      "limit": 0.1,
+      "observed": 0.9746735095977783,
+      "passed": true
+    },
+    "required_free_disk_ratio_min": {
+      "operator": ">=",
+      "limit": 0.1,
+      "observed": 0.5992812453491864,
+      "passed": true
+    }
+  },
+  "thresholds_passed": true,
+  "abort_rule_breaches": [
+
+  ]
+}

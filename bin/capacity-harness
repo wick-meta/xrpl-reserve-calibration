@@ -1,0 +1,397 @@
+#!/bin/sh
+set -eu
+
+unset XRPL_CAPACITY_CONFIG_DIR
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+compose_file="$project_dir/capacity/compose.yml"
+image_ref='xrpllabsofficial/xrpld@sha256:353d5e016bb93519e9fcac715cdc8c2205b96c4cfe2d1f0f1d22a22f6efaff70'
+checkout_digest=$(ruby -rdigest -e 'print Digest::SHA256.hexdigest(ARGV.fetch(0))[0, 12]' "$project_dir")
+project_name="xrpl-reserve-capacity-$checkout_digest"
+network_name="${project_name}_capacity_internal"
+
+compose() {
+  docker compose --project-name "$project_name" --file "$compose_file" "$@"
+}
+
+candidate_metadata() {
+  run_id=${1:-}
+  case "$run_id" in
+    r[0-9][0-9][0-9][0-9][0-9][0-9][0-9]-a[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-n[0-9][0-9]) ;;
+    *)
+      echo "invalid candidate run ID" >&2
+      return 64
+      ;;
+  esac
+
+  ruby -I"$project_dir/lib" -rxrpl_reserve_study -e '
+    root, run_id = ARGV
+    runtime = File.join(root, "capacity", "runtime")
+    config_dir = File.join(runtime, run_id, "config")
+    config_file = File.join(config_dir, "rippled.cfg")
+    begin
+      current = runtime
+      raise unless File.lstat(current).directory? && !File.symlink?(current)
+      [run_id, "config"].each do |component|
+        current = File.join(current, component)
+        stat = File.lstat(current)
+        raise unless stat.directory? && !stat.symlink?
+      end
+      file_stat = File.lstat(config_file)
+      raise unless file_stat.file? && !file_stat.symlink?
+      raise unless File.realpath(config_dir) == config_dir && File.realpath(config_file) == config_file
+      expected = XrplReserveStudy::CandidateConfigRenderer.new.expected(run_id: run_id)
+      raise unless File.binread(config_file) == expected.fetch("config_bytes")
+      puts config_dir
+      puts expected.fetch("base_reserve_xrp")
+    rescue StandardError
+      warn "candidate configuration is missing or does not match the preregistered run"
+      exit 1
+    end
+  ' "$project_dir" "$run_id"
+}
+
+refuse_existing_resources() {
+  resource_query docker ps --all --filter "label=com.docker.compose.project=$project_name" --format '{{.ID}}' || return $?
+  resource_query docker network ls --filter "name=^${network_name}$" --format '{{.Name}}' || return $?
+  for volume_name in "${project_name}_capacity_data" "${project_name}_capacity_logs"; do
+    resource_query docker volume ls --filter "name=^${volume_name}$" --format '{{.Name}}' || return $?
+  done
+}
+
+resource_query() {
+  if ruby -I"$project_dir/lib" -rxrpl_reserve_study/bounded_absence_query -e \
+    'exit XrplReserveStudy::BoundedAbsenceQuery.exit_code(ARGV)' -- "$@"
+  then
+    return 0
+  else
+    query_status=$?
+  fi
+  if [ "$query_status" -eq 1 ]; then
+    echo "checkout-scoped capacity resource already exists" >&2
+  else
+    echo "checkout-scoped capacity resource discovery failed" >&2
+  fi
+  return 1
+}
+
+verify_reset_absence() {
+  if ! resource_query docker ps --all \
+    --filter "label=com.docker.compose.project=$project_name" --format '{{.ID}}' >/dev/null 2>&1
+  then
+    echo "checkout-scoped capacity cleanup verification failed" >&2
+    return 1
+  fi
+  if ! resource_query docker network ls \
+    --filter "name=^${network_name}$" --format '{{.Name}}' >/dev/null 2>&1
+  then
+    echo "checkout-scoped capacity cleanup verification failed" >&2
+    return 1
+  fi
+  for volume_name in "${project_name}_capacity_data" "${project_name}_capacity_logs"; do
+    if ! resource_query docker volume ls \
+      --filter "name=^${volume_name}$" --format '{{.Name}}' >/dev/null 2>&1
+    then
+      echo "checkout-scoped capacity cleanup verification failed" >&2
+      return 1
+    fi
+  done
+}
+
+canonical_arch() {
+  normalized_arch=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  normalized_arch=${normalized_arch#linux/}
+  case "$normalized_arch" in
+    amd64|x86_64|x86-64)
+      printf '%s\n' amd64
+      ;;
+    arm64|aarch64|arm64/v8|armv8|arm64v8)
+      printf '%s\n' arm64
+      ;;
+    *)
+      printf 'unsupported:%s\n' "$normalized_arch"
+      ;;
+  esac
+}
+
+readiness_diagnostics() {
+  echo "counted_run_ready=false reason=counted-execution-prerequisites-not-complete remaining_gates=pilot-validation,native-execution"
+  echo "phase2_complete=false remaining_gates=pilot-validation,native-execution,randomized-counted-runs,second-environment-replication,final-review"
+}
+
+doctor() {
+  if ! docker version >/dev/null; then
+    readiness_diagnostics
+    return 2
+  fi
+  if ! compose config --quiet; then
+    readiness_diagnostics
+    return 2
+  fi
+  if ! image_arch_value=$(docker image inspect "$image_ref" --format '{{.Architecture}}'); then
+    readiness_diagnostics
+    return 2
+  fi
+  image_arch=$(canonical_arch "$image_arch_value")
+  if ! host_arch_value=$(docker info --format '{{.Architecture}}'); then
+    readiness_diagnostics
+    return 2
+  fi
+  host_arch=$(canonical_arch "$host_arch_value")
+  if ! resolved=$(docker image inspect "$image_ref" --format '{{index .RepoDigests 0}}'); then
+    readiness_diagnostics
+    return 2
+  fi
+  [ "$resolved" = "$image_ref" ] || {
+    echo "image digest mismatch" >&2
+    readiness_diagnostics
+    exit 2
+  }
+  echo "image=$resolved image_arch=$image_arch host_arch=$host_arch"
+  case "$image_arch" in
+    amd64|arm64) ;;
+    *)
+      echo "native_architecture_eligible=false reason=unsupported-container-architecture"
+      readiness_diagnostics
+      return 2
+      ;;
+  esac
+  case "$host_arch" in
+    amd64|arm64) ;;
+    *)
+      echo "native_architecture_eligible=false reason=unsupported-host-architecture"
+      readiness_diagnostics
+      return 2
+      ;;
+  esac
+  if [ "$image_arch" != "$host_arch" ]; then
+    echo "native_architecture_eligible=false reason=non-native-container-architecture"
+    readiness_diagnostics
+    return 2
+  fi
+  echo "native_architecture_eligible=true"
+  readiness_diagnostics
+  return 2
+}
+
+verify_isolation() {
+  container_id=$(compose ps --quiet rippled)
+  [ -n "$container_id" ] || {
+    echo "rippled container is not running" >&2
+    exit 1
+  }
+  network_id=$(docker network inspect "$network_name" --format '{{.Id}}')
+  [ -n "$network_id" ] || {
+    echo "capacity network has no inspectable ID" >&2
+    exit 1
+  }
+  docker inspect "$container_id" | ruby -rjson -e '
+    d = JSON.parse(STDIN.read).fetch(0)
+    expected_network = ARGV.fetch(0)
+    expected_network_id = ARGV.fetch(1)
+    h = d.fetch("HostConfig")
+    c = d.fetch("Config")
+    network_settings = d.fetch("NetworkSettings")
+    ports = network_settings["Ports"] || {}
+    networks = network_settings.fetch("Networks")
+    abort "unexpected container user" unless c["User"] == "997:997"
+    abort "root filesystem is writable" unless h["ReadonlyRootfs"] == true
+    abort "capabilities were not dropped" unless h["CapDrop"] == ["ALL"]
+    abort "privilege escalation is not disabled" unless h.fetch("SecurityOpt").include?("no-new-privileges:true")
+    abort "memory limit drift" unless h["Memory"] == 17_179_869_184
+    abort "CPU limit drift" unless h["NanoCpus"] == 4_000_000_000
+    abort "PID limit drift" unless h["PidsLimit"] == 512
+    abort "host port was published" unless ports.values.all?(&:nil?)
+    abort "unexpected container network attachments" unless networks.keys == [expected_network]
+    attached_network = networks.fetch(expected_network)
+    abort "container network ID drift" unless attached_network["NetworkID"] == expected_network_id
+  ' "$network_name" "$network_id"
+  docker network inspect "$network_name" | ruby -rjson -e '
+    d = JSON.parse(STDIN.read).fetch(0)
+    expected_network = ARGV.fetch(0)
+    expected_network_id = ARGV.fetch(1)
+    abort "capacity network name drift" unless d["Name"] == expected_network
+    abort "capacity network ID drift" unless d["Id"] == expected_network_id
+    abort "capacity network is not internal" unless d["Internal"] == true
+    abort "capacity network is attachable" unless d["Attachable"] == false
+  ' "$network_name" "$network_id"
+  echo "container isolation verified"
+}
+
+verify_candidate() {
+  run_id=$1
+  metadata=$(candidate_metadata "$run_id") || exit $?
+  config_dir=$(printf '%s\n' "$metadata" | sed -n '1p')
+  expected_reserve=$(printf '%s\n' "$metadata" | sed -n '2p')
+  verify_isolation
+  container_id=$(compose ps --quiet rippled)
+  docker inspect "$container_id" | ruby -rjson -e '
+    d = JSON.parse(STDIN.read).fetch(0)
+    expected_source = ARGV.fetch(0)
+    expected_image = ARGV.fetch(1)
+    abort "image digest mismatch" unless d.fetch("Config").fetch("Image") == expected_image
+    expected_entrypoint = ["/bin/sh", "-c"]
+    expected_command = ["mkdir -p /var/lib/xrpld/db/nudb /var/log/xrpld && exec /usr/bin/xrpld --conf /config/rippled.cfg --standalone"]
+    config = d.fetch("Config")
+    abort "standalone command drift" unless config["Entrypoint"] == expected_entrypoint && config["Cmd"] == expected_command
+    mounts = d.fetch("Mounts")
+    config_mounts = mounts.select do |mount|
+      destination = mount["Destination"]
+      destination == "/config" || (destination.is_a?(String) && destination.start_with?("/config/"))
+    end
+    abort "additional config mount detected" unless config_mounts.length == 1
+    mount = config_mounts.fetch(0)
+    abort "config mount destination drift" unless mount["Destination"] == "/config"
+    abort "config mount source drift" unless mount["Type"] == "bind" && mount["Source"] == expected_source
+    abort "config mount is not read-only" unless mount["RW"] == false && mount["Mode"].to_s.split(",").include?("ro")
+    abort "config mount propagation drift" unless ["", "rprivate"].include?(mount["Propagation"])
+  ' "$config_dir" "$image_ref"
+  response=$(compose exec --no-TTY rippled /usr/bin/xrpld --conf /config/rippled.cfg server_info)
+  printf '%s\n' "$response" | ruby -rjson -e '
+    info = JSON.parse(STDIN.read).dig("result", "info")
+    abort "server_info missing" unless info.is_a?(Hash)
+    abort "wrong build version" unless info["build_version"] == "3.3.0"
+    abort "wrong network id" unless info["network_id"] == 21_338
+    abort "peer isolation failed" unless info["peers"] == 0
+    abort "unexpected validation quorum" unless info["validation_quorum"] == 0
+    ledger = info.fetch("validated_ledger")
+    expected_reserve = Float(ARGV.fetch(0))
+    abort "wrong base reserve" unless ledger["reserve_base_xrp"] == expected_reserve
+    abort "wrong reserve increment" unless ledger["reserve_inc_xrp"] == 0.2
+  ' "$expected_reserve"
+  echo "candidate verified"
+}
+
+candidate_identity() {
+  run_id=$1
+  metadata=$(candidate_metadata "$run_id") || exit $?
+  config_dir=$(printf '%s\n' "$metadata" | sed -n '1p')
+  container_id=$(compose ps --quiet rippled)
+  [ -n "$container_id" ] || {
+    echo "rippled container is not running" >&2
+    exit 1
+  }
+  project_containers=$(docker ps --all --no-trunc --filter "label=com.docker.compose.project=$project_name" --format '{{.ID}}')
+  [ "$project_containers" = "$container_id" ] || {
+    echo "checkout-scoped candidate container inventory drift" >&2
+    exit 1
+  }
+  project_networks=$(docker network ls --filter "label=com.docker.compose.project=$project_name" --format '{{.Name}}')
+  [ "$project_networks" = "$network_name" ] || {
+    echo "checkout-scoped candidate network inventory drift" >&2
+    exit 1
+  }
+  project_volumes=$(docker volume ls --filter "label=com.docker.compose.project=$project_name" --format '{{.Name}}')
+  expected_volumes=$(printf '%s\n%s\n' "${project_name}_capacity_data" "${project_name}_capacity_logs")
+  [ "$project_volumes" = "$expected_volumes" ] || {
+    echo "checkout-scoped candidate volume inventory drift" >&2
+    exit 1
+  }
+  network_id=$(docker network inspect "$network_name" --format '{{.Id}}')
+  docker inspect "$container_id" | ruby -rjson -e '
+    d = JSON.parse(STDIN.read).fetch(0)
+    container_id, project, network_name, network_id, config_source, image = ARGV
+    config = d.fetch("Config")
+    labels = config.fetch("Labels")
+    abort "candidate project identity drift" unless
+      labels["com.docker.compose.project"] == project &&
+      labels["com.docker.compose.service"] == "rippled"
+    abort "image digest mismatch" unless config.fetch("Image") == image
+    networks = d.fetch("NetworkSettings").fetch("Networks")
+    abort "candidate network identity drift" unless
+      networks.keys == [network_name] && networks.dig(network_name, "NetworkID") == network_id
+    mounts = d.fetch("Mounts")
+    expected = {
+      "/config" => ["bind", config_source, false],
+      "/var/lib/xrpld" => ["volume", "#{project}_capacity_data", true],
+      "/var/log/xrpld" => ["volume", "#{project}_capacity_logs", true]
+    }
+    abort "candidate mount inventory drift" unless mounts.length == expected.length
+    mounts.each do |mount|
+      destination = mount.fetch("Destination")
+      type, source, writable = expected.fetch(destination)
+      actual_source = type == "volume" ? mount["Name"] : mount["Source"]
+      abort "candidate mount identity drift" unless
+        mount["Type"] == type && actual_source == source && mount["RW"] == writable
+    end
+    puts JSON.generate(
+      "container_id" => container_id, "project" => project, "network" => network_name,
+      "network_id" => network_id, "config_source" => config_source,
+      "image" => image,
+      "mounts" => mounts.map { |mount| mount.slice("Type", "Name", "Source", "Destination", "RW") }
+                        .sort_by { |mount| mount.fetch("Destination") }
+    )
+  ' "$container_id" "$project_name" "$network_name" "$network_id" "$config_dir" "$image_ref"
+}
+
+usage() {
+  echo "usage: bin/capacity-harness {doctor|up|up-candidate RUN_ID|smoke|verify|verify-candidate RUN_ID|restart-candidate RUN_ID|down|reset}" >&2
+  exit 64
+}
+
+case "${1:-}" in
+  doctor)
+    doctor
+    ;;
+  up)
+    compose up --detach --wait
+    ;;
+  up-candidate)
+    [ "$#" -eq 2 ] || usage
+    metadata=$(candidate_metadata "${2:-}") || exit $?
+    config_dir=$(printf '%s\n' "$metadata" | sed -n '1p')
+    refuse_existing_resources
+    env XRPL_CAPACITY_CONFIG_DIR="$config_dir" docker compose \
+      --project-name "$project_name" --file "$compose_file" up --detach --wait
+    ;;
+  smoke)
+    compose up --detach --wait
+    verify_isolation
+    response=$(compose exec --no-TTY rippled /usr/bin/xrpld --conf /config/rippled.cfg server_info)
+    printf '%s\n' "$response" | ruby -rjson -e '
+      info = JSON.parse(STDIN.read).dig("result", "info")
+      abort "server_info missing" unless info.is_a?(Hash)
+      abort "wrong build version" unless info["build_version"] == "3.3.0"
+      abort "wrong network id" unless info["network_id"] == 21_338
+      abort "peer isolation failed" unless info["peers"] == 0
+      abort "unexpected validation quorum" unless info["validation_quorum"] == 0
+      ledger = info.fetch("validated_ledger")
+      abort "wrong base reserve" unless ledger["reserve_base_xrp"] == 1
+      abort "wrong reserve increment" unless ledger["reserve_inc_xrp"] == 0.2
+      puts JSON.pretty_generate("functional_smoke" => "passed", "ledger_index" => ledger["seq"], "ledger_hash" => ledger["hash"])
+    '
+    ;;
+  verify)
+    verify_isolation
+    ;;
+  verify-candidate)
+    [ "$#" -eq 2 ] || usage
+    verify_candidate "${2:-}"
+    ;;
+  restart-candidate)
+    [ "$#" -eq 2 ] || usage
+    verify_candidate "${2:-}"
+    before_identity=$(candidate_identity "${2:-}")
+    compose restart rippled
+    after_identity=$(candidate_identity "${2:-}")
+    [ "$before_identity" = "$after_identity" ] || {
+      echo "candidate identity changed during restart" >&2
+      exit 1
+    }
+    echo "candidate restarted"
+    ;;
+  down)
+    compose down
+    ;;
+  reset)
+    [ "${XRPL_CAPACITY_CONFIRM_RESET:-}" = "1" ] || {
+      echo "set XRPL_CAPACITY_CONFIRM_RESET=1 to delete experiment volumes" >&2
+      exit 64
+    }
+    compose down --volumes
+    verify_reset_absence
+    ;;
+  *)
+    usage
+    ;;
+esac

@@ -1,0 +1,23 @@
+# This default uses two operators and therefore emits independently_corroborated
+# evidence when they agree. Operators with one indexed HTTPS endpoint can copy
+# operator-local-endpoints-v1.example.yml outside the repository instead.
+schema_version: owner-object-endpoint-manifest-v1
+minimum_required_operators: 2
+selection_rule: minimum-latest-validated-ledger
+health_gate:
+  max_validated_ledger_age_seconds: 120
+  max_latest_ledger_spread: 50
+  allowed_server_states:
+    - full
+    - proposing
+    - validating
+    - tracking
+endpoints:
+  - endpoint_id: honeycluster-mainnet
+    operator_id: honeycluster
+    url: https://honeycluster.io/
+    operator_evidence_url: https://xrpl.org/docs/tutorials/public-servers
+  - endpoint_id: ripple-full-history-mainnet
+    operator_id: ripple
+    url: https://s2.ripple.com:51234/
+    operator_evidence_url: https://xrpl.org/docs/tutorials/public-servers

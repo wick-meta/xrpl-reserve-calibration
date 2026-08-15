@@ -1,0 +1,32 @@
+name: Research proposal
+description: Propose a scoped measurement, model, or replication.
+title: "research: "
+labels: [research, triage]
+body:
+  - type: textarea
+    id: claim
+    attributes:
+      label: Falsifiable claim or question
+    validations:
+      required: true
+  - type: textarea
+    id: method
+    attributes:
+      label: Proposed method
+      description: Include controls, metrics, uncertainty, and stopping or abort rules.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Acceptance evidence
+      description: State what result would support or falsify the claim.
+    validations:
+      required: true
+  - type: textarea
+    id: conflicts
+    attributes:
+      label: Conflicts and dependencies
+      description: Disclose relevant interests and external dependencies.
+    validations:
+      required: true

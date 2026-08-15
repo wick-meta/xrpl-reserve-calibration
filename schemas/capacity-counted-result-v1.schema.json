@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:capacity-counted-result-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "status", "counted_run", "authorization_sha256"],
+  "properties": {
+    "schema_version": {"const": "capacity-counted-result-v1"},
+    "run_id": {"type": "string", "pattern": "^r[0-9]{7}-a[0-9]{9}-n[0-9]{2}$"},
+    "status": {"enum": ["passed", "failed", "aborted", "excluded"]},
+    "counted_run": {"const": true},
+    "authorization_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

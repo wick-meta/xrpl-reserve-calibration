@@ -1,0 +1,11 @@
+/.bundle/
+/coverage/
+/tmp/
+*.log
+*.swp
+.DS_Store
+.env
+.env.*
+!.env.example
+evidence/generated/
+capacity/runtime/

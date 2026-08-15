@@ -1,0 +1,24 @@
+schema_version: sponsor-calibration-v1
+candidate_release: 3.3.0
+candidate_commit: 00a178fb92ca49521b937ae1a99d863765ea8a90
+amendment: Sponsor
+counted_execution_authorized: false
+scenarios:
+  - id: fee-only
+    sponsorship: fee
+    workload: accountroot-create-and-hold-v1
+  - id: reserve-only
+    sponsorship: reserve
+    workload: accountroot-create-and-hold-v1
+  - id: combined
+    sponsorship: fee-and-reserve
+    workload: accountroot-create-and-hold-v1
+  - id: object-mix
+    sponsorship: reserve
+    workload: trust-lines-offers-tickets-nft-pages-v1
+  - id: failure-boundaries
+    sponsorship: fee-and-reserve
+    workload: sponsor-failure-boundaries-v1
+  - id: lifecycle
+    sponsorship: reserve
+    workload: sponsorship-transfer-dissolution-v1

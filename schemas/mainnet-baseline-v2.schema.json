@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wick-meta/xrpl-reserve-calibration/blob/main/schemas/mainnet-baseline-v2.schema.json",
+  "title": "Single exact-ledger FeeSettings observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "observed_at", "endpoint", "ledger_index", "ledger_hash", "reserve_base_drops", "reserve_increment_drops", "fee_settings_index", "raw_response_sha256"],
+  "properties": {
+    "schema_version": { "const": "mainnet-baseline-v2" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "endpoint": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "ledger_index": { "type": "integer", "minimum": 1 },
+    "ledger_hash": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
+    "reserve_base_drops": { "type": "integer", "minimum": 0 },
+    "reserve_increment_drops": { "type": "integer", "minimum": 0 },
+    "fee_settings_index": { "const": "4BC50C9B0D8515D3EAAE1E74B29A95804346C491EE1A95BF25E4AAB854A6A651" },
+    "raw_response_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

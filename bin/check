@@ -1,0 +1,60 @@
+#!/bin/sh
+set -eu
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_dir"
+
+find lib test bin -type f \( -name '*.rb' -o -path 'bin/reserve-study' -o -path 'bin/verify-evidence' \) -print |
+  while IFS= read -r file; do ruby -c "$file" >/dev/null; done
+sh -n bin/private-network
+
+ruby -Ilib test/study_test.rb
+ruby -Ilib test/protocol_alignment_test.rb
+ruby -Ilib test/sponsor_calibration_test.rb
+ruby -Ilib test/private_network_test.rb
+ruby -Ilib test/capacity_pilot_protocol_test.rb
+ruby -Ilib test/capacity_pilot_schema_test.rb
+ruby -Ilib test/candidate_config_renderer_test.rb
+ruby -Ilib test/runtime_publisher_test.rb
+ruby -Ilib test/workload_generator_test.rb
+ruby -Ilib test/capacity_harness_test.rb
+ruby -Ilib test/capacity_rpc_client_test.rb
+ruby -Ilib test/capacity_execution_inputs_test.rb
+ruby -Ilib test/capacity_run_inputs_test.rb
+ruby -Ilib test/capacity_execution_engine_test.rb
+ruby -Ilib test/capacity_pilot_execution_engine_test.rb
+ruby -Ilib test/capacity_functional_smoke_test.rb
+ruby -Ilib test/capacity_metrics_test.rb
+ruby -Ilib test/capacity_metric_snapshot_collector_test.rb
+ruby -Ilib test/capacity_pilot_sampler_test.rb
+ruby -Ilib test/capacity_non_counted_pilot_test.rb
+ruby -Ilib test/capacity_environment_probe_test.rb
+ruby -Ilib test/capacity_run_manifest_test.rb
+ruby -Ilib test/reserve_study_cli_test.rb
+ruby -Ilib test/mainnet_observer_test.rb
+ruby -Ilib test/baseline_bundle_test.rb
+ruby -Ilib test/owner_object_distribution_test.rb
+ruby -Ilib test/operator_object_report_test.rb
+ruby -Ilib test/operator_object_distribution_importer_test.rb
+ruby -Ilib test/operator_report_documentation_test.rb
+ruby -Ilib test/complete_reserves_study_test.rb
+ruby -Ilib test/complete_reserves_config_test.rb
+ruby -Ilib test/complete_reserves_workload_test.rb
+ruby -Ilib test/complete_reserves_run_test.rb
+ruby -Ilib test/complete_reserves_artifacts_test.rb
+ruby -Ilib test/complete_reserves_matrix_test.rb
+ruby -Ilib test/complete_reserves_workflow_test.rb
+ruby -rjson -e 'Dir["schemas/*.json"].each { |path| JSON.parse(File.read(path)) }'
+bin/reserve-study validate >/dev/null
+bin/verify-evidence
+if [ "${XRPL_SKIP_DOCKER:-0}" = "1" ]; then
+  echo "Docker Compose validation skipped: explicitly disabled"
+elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  docker compose --file capacity/compose.yml config --quiet
+  XRPL_PRIVATE_NETWORK_RUNTIME="$project_dir/capacity/runtime/private-network" \
+    docker compose --file capacity/private-network/compose.yml config --quiet
+else
+  echo "Docker Compose validation skipped: Docker is unavailable"
+fi
+
+echo "all checks passed"

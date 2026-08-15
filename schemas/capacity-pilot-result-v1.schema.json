@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:capacity-pilot-result-v1",
+  "title": "Closed non-counted pilot result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "pilot_scope", "candidate_specific", "status", "disposition_code",
+    "pilot_complete", "counted_execution_authorized", "native_execution_established",
+    "source_commit", "run_id", "protocol_sha256", "manifest_sha256", "transactions_sha256",
+    "samples_sha256", "metrics_summary_sha256", "sample_count", "transaction_count",
+    "thresholds_passed", "abort_rule_breached", "controlled_restart_recovered",
+    "reset_confirmed", "bindings_validated"
+  ],
+  "properties": {
+    "schema_version": { "const": "capacity-pilot-result-v1" },
+    "pilot_scope": { "const": "non-counted-pilot" },
+    "candidate_specific": { "const": true },
+    "status": { "enum": ["passed", "failed", "aborted"] },
+    "disposition_code": { "enum": ["success", "threshold-failure", "validation-failure", "abort-rule-breach", "interrupted", "runtime-error", "incomplete"] },
+    "pilot_complete": { "type": "boolean" },
+    "counted_execution_authorized": { "const": false },
+    "native_execution_established": { "const": false },
+    "source_commit": { "type": "string", "pattern": "^[a-f0-9]{40}(?![\\s\\S])" },
+    "run_id": { "const": "r0500000-a000010000-n01" },
+    "protocol_sha256": { "$ref": "#/$defs/sha256" },
+    "manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "transactions_sha256": { "$ref": "#/$defs/sha256" },
+    "samples_sha256": { "$ref": "#/$defs/sha256" },
+    "metrics_summary_sha256": { "$ref": "#/$defs/sha256" },
+    "sample_count": {
+      "description": "Fully captured samples, including the post-warmup sample.",
+      "type": "integer", "minimum": 0, "maximum": 901
+    },
+    "transaction_count": {
+      "description": "Scheduled Payment transactions that completed validated finality.",
+      "type": "integer", "minimum": 0, "maximum": 3
+    },
+    "thresholds_passed": { "type": "boolean" },
+    "abort_rule_breached": { "type": "boolean" },
+    "controlled_restart_recovered": { "type": "boolean" },
+    "reset_confirmed": { "type": "boolean" },
+    "bindings_validated": { "type": "boolean" }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "status": { "const": "passed" }, "disposition_code": { "const": "success" },
+        "pilot_complete": { "const": true }, "sample_count": { "const": 901 },
+        "transaction_count": { "const": 3 }, "thresholds_passed": { "const": true },
+        "abort_rule_breached": { "const": false }, "controlled_restart_recovered": { "const": true },
+        "reset_confirmed": { "const": true }, "bindings_validated": { "const": true }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "failed" }, "disposition_code": { "const": "threshold-failure" },
+        "pilot_complete": { "const": false }, "sample_count": { "const": 901 },
+        "transaction_count": { "const": 3 }, "thresholds_passed": { "const": false },
+        "abort_rule_breached": { "const": false }, "controlled_restart_recovered": { "const": true },
+        "reset_confirmed": { "const": true }, "bindings_validated": { "const": true }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "failed" }, "disposition_code": { "const": "validation-failure" },
+        "pilot_complete": { "const": false }, "sample_count": { "const": 901 },
+        "transaction_count": { "const": 3 }, "thresholds_passed": { "const": false },
+        "abort_rule_breached": { "const": false }, "controlled_restart_recovered": { "const": false },
+        "reset_confirmed": { "const": true }, "bindings_validated": { "const": true }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "failed" }, "disposition_code": { "const": "incomplete" },
+        "pilot_complete": { "const": false }, "sample_count": { "const": 0 },
+        "transaction_count": { "const": 0 }, "thresholds_passed": { "const": false },
+        "abort_rule_breached": { "const": false }, "controlled_restart_recovered": { "const": false },
+        "reset_confirmed": { "const": true }, "bindings_validated": { "const": true }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "aborted" }, "disposition_code": { "const": "abort-rule-breach" },
+        "pilot_complete": { "const": false },
+        "thresholds_passed": { "const": false }, "abort_rule_breached": { "const": true },
+        "controlled_restart_recovered": { "const": false }, "reset_confirmed": { "const": true },
+        "bindings_validated": { "const": true }
+      },
+      "allOf": [{ "$ref": "#/$defs/abort_progress" }]
+    },
+    {
+      "properties": {
+        "status": { "const": "aborted" }, "disposition_code": { "const": "interrupted" },
+        "pilot_complete": { "const": false },
+        "thresholds_passed": { "const": false }, "abort_rule_breached": { "const": false },
+        "controlled_restart_recovered": { "const": false }, "reset_confirmed": { "const": true },
+        "bindings_validated": { "const": true }
+      },
+      "allOf": [{ "$ref": "#/$defs/interruption_progress" }]
+    },
+    {
+      "properties": {
+        "status": { "const": "aborted" }, "disposition_code": { "const": "runtime-error" },
+        "pilot_complete": { "const": false },
+        "thresholds_passed": { "const": false }, "abort_rule_breached": { "const": false },
+        "controlled_restart_recovered": { "const": false }, "reset_confirmed": { "const": true },
+        "bindings_validated": { "const": true }
+      },
+      "allOf": [{ "$ref": "#/$defs/interruption_progress" }]
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}(?![\\s\\S])" },
+    "abort_progress": {
+      "oneOf": [
+        { "properties": { "sample_count": { "const": 1 }, "transaction_count": { "const": 0 } } },
+        { "properties": { "sample_count": { "type": "integer", "minimum": 2, "maximum": 450 }, "transaction_count": { "const": 1 } } },
+        { "properties": { "sample_count": { "type": "integer", "minimum": 451, "maximum": 900 }, "transaction_count": { "const": 2 } } },
+        { "properties": { "sample_count": { "const": 901 }, "transaction_count": { "const": 3 } } }
+      ]
+    },
+    "interruption_progress": {
+      "oneOf": [
+        { "properties": { "sample_count": { "const": 0 }, "transaction_count": { "const": 0 } } },
+        { "properties": { "sample_count": { "const": 1 }, "transaction_count": { "type": "integer", "minimum": 0, "maximum": 1 } } },
+        { "properties": { "sample_count": { "type": "integer", "minimum": 2, "maximum": 449 }, "transaction_count": { "const": 1 } } },
+        { "properties": { "sample_count": { "const": 450 }, "transaction_count": { "type": "integer", "minimum": 1, "maximum": 2 } } },
+        { "properties": { "sample_count": { "type": "integer", "minimum": 451, "maximum": 899 }, "transaction_count": { "const": 2 } } },
+        { "properties": { "sample_count": { "const": 900 }, "transaction_count": { "type": "integer", "minimum": 2, "maximum": 3 } } },
+        { "properties": { "sample_count": { "const": 901 }, "transaction_count": { "const": 3 } } }
+      ]
+    }
+  }
+}

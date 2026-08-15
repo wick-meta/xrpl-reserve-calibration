@@ -1,0 +1,57 @@
+{
+  "schema_version": "mainnet-baseline-bundle-v1",
+  "source_commit": "0177fe123998384fe1dbc145afe7e62c02b2ff15",
+  "captured_at": "2026-08-03T03:00:07.801073Z",
+  "selection_rule": "minimum-latest-validated-ledger",
+  "target_ledger_index": 106034050,
+  "status": "agreed",
+  "preflight": [
+    {
+      "endpoint_id": "honeycluster-mainnet",
+      "operator_id": "honeycluster",
+      "latest_validated_ledger": 106034050,
+      "validated_ledger_age_seconds": 3,
+      "server_state": null,
+      "server_info_sha256": "a6213e2fc5045f11090f616ffda0df58acb340826784152d520125d651aca59c"
+    },
+    {
+      "endpoint_id": "ripple-full-history-mainnet",
+      "operator_id": "ripple",
+      "latest_validated_ledger": 106034050,
+      "validated_ledger_age_seconds": 4,
+      "server_state": null,
+      "server_info_sha256": "385c6247daaf0306342f3f2efa73d357f14769d2cc2bb0fa5366726bbcea9daf"
+    }
+  ],
+  "failures": [
+
+  ],
+  "observations": [
+    {
+      "endpoint_id": "honeycluster-mainnet",
+      "operator_id": "honeycluster",
+      "operator_evidence_url": "https://xrpl.org/docs/tutorials/public-servers",
+      "endpoint": "https://honeycluster.io/",
+      "ledger_index": 106034050,
+      "ledger_hash": "D8A5E8C8BCEE3139A56510E62B242D833D8F7730927109DF9EAFB7559204A90A",
+      "reserve_base_drops": 1000000,
+      "reserve_increment_drops": 200000,
+      "fee_settings_index": "4BC50C9B0D8515D3EAAE1E74B29A95804346C491EE1A95BF25E4AAB854A6A651",
+      "server_info_sha256": "a6213e2fc5045f11090f616ffda0df58acb340826784152d520125d651aca59c",
+      "fee_settings_sha256": "2f5b3b2532f7e39fa16fe7509d971b26a1e4f6fd4e30219e2cfdf17eb621e09e"
+    },
+    {
+      "endpoint_id": "ripple-full-history-mainnet",
+      "operator_id": "ripple",
+      "operator_evidence_url": "https://xrpl.org/docs/tutorials/public-servers",
+      "endpoint": "https://s2.ripple.com:51234/",
+      "ledger_index": 106034050,
+      "ledger_hash": "D8A5E8C8BCEE3139A56510E62B242D833D8F7730927109DF9EAFB7559204A90A",
+      "reserve_base_drops": 1000000,
+      "reserve_increment_drops": 200000,
+      "fee_settings_index": "4BC50C9B0D8515D3EAAE1E74B29A95804346C491EE1A95BF25E4AAB854A6A651",
+      "server_info_sha256": "385c6247daaf0306342f3f2efa73d357f14769d2cc2bb0fa5366726bbcea9daf",
+      "fee_settings_sha256": "2f5b3b2532f7e39fa16fe7509d971b26a1e4f6fd4e30219e2cfdf17eb621e09e"
+    }
+  ]
+}

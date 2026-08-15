@@ -1,0 +1,68 @@
+schema_version: reserve-calibration-study-v1
+study_id: reserve-calibration-v1
+status: preregistered-final
+random_seed: 260803
+protocol_reference:
+  documentation: https://xrpl.org/docs/concepts/accounts/reserves
+  fee_settings: https://xrpl.org/docs/references/protocol/ledger-data/ledger-entry-types/feesettings
+  implementation_repository: https://github.com/XRPLF/rippled
+  implementation_release: 3.1.3
+  implementation_commit: 46b241ace8b30d9c9775d60ffba7d24b21903896
+network:
+  capacity_environment: isolated-ephemeral-only
+  public_observation: read-only
+reserve_options_xrp:
+  - 1.0
+  - 0.5
+  - 0.25
+  - 0.1
+reference_base_reserve_xrp: 1.0
+account_counts:
+  - 10000
+  - 25000
+  - 50000
+  - 100000
+  - 250000
+  - 500000
+repetitions: 3
+counted_run_policy:
+  run_order: sha256-sort-of-seed-and-run-id
+  preserve_all_dispositions: true
+  allowed_dispositions:
+    - passed
+    - failed
+    - aborted
+    - excluded
+  retry_counted_run: false
+  exclusion_requires_reason: true
+workload:
+  name: accountroot-create-and-hold-v1
+  warmup_seconds: 300
+  measurement_seconds: 1800
+metrics:
+  - ledger_bytes
+  - database_bytes
+  - resident_memory_bytes
+  - cpu_utilization_ratio
+  - ledger_close_seconds
+  - transaction_success_ratio
+  - recovery_seconds
+metric_definitions:
+  ledger_bytes: ledger-state bytes at measurement end minus post-warmup bytes
+  database_bytes: node-store and relational-database bytes at measurement end minus post-warmup bytes
+  resident_memory_bytes: maximum resident set size during measurement
+  cpu_utilization_ratio: process CPU seconds divided by elapsed seconds and allocated logical CPUs
+  ledger_close_seconds: validated-ledger close interval sampled during measurement
+  transaction_success_ratio: successful account-creation transactions divided by attempted transactions
+  recovery_seconds: elapsed time from controlled restart until validated-ledger tracking resumes
+acceptance_thresholds:
+  transaction_success_ratio_min: 0.99
+  ledger_close_seconds_p95_max: 5.0
+  recovery_seconds_max: 300
+  required_free_memory_ratio_min: 0.10
+  required_free_disk_ratio_min: 0.10
+  rationale: provisional safety bounds requiring public review before status can become preregistered-final
+abort_rules:
+  max_ledger_close_seconds: 30
+  max_resident_memory_bytes: 17179869184
+  min_free_disk_bytes: 10737418240

@@ -1,0 +1,308 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "json"
+require "open3"
+require "optparse"
+require_relative "../lib/xrpl_reserve_study"
+
+ROOT = File.expand_path("..", __dir__)
+DEFAULT_STUDY = File.join(ROOT, "study", "reserve-calibration-v1.yml")
+
+command = ARGV.shift
+options = {}
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: bin/reserve-study COMMAND [options]"
+  opts.on("--study PATH", "Study specification") { |value| options[:study] = value }
+  opts.on("--endpoint URL", "HTTPS JSON-RPC endpoint") { |value| options[:endpoint] = value }
+  opts.on("--endpoints PATH", "Endpoint manifest") { |value| options[:endpoints] = value }
+  opts.on("--report PATH", "Operator aggregate report") { |value| options[:report] = value }
+  opts.on("--output-dir PATH", "Output directory") { |value| options[:output_dir] = value }
+  opts.on("--run-id ID", "Planned run identifier") { |value| options[:run_id] = value }
+  opts.on("--pilot-accounts N", Integer, "Non-counted pilot AccountRoot population") { |value| options[:pilot_accounts] = value }
+  opts.on("--full-plan", "Generate the exact planned AccountRoot population") { options[:full_plan] = true }
+  opts.on("--accounts N", Integer, "AccountRoot population") { |value| options[:accounts] = value }
+  opts.on("--owned-objects N", Integer, "Owner-reserve object population") { |value| options[:owned_objects] = value }
+  opts.on("--owner-reserve XRP", Float, "Owner reserve in XRP") { |value| options[:owner_reserve] = value }
+  opts.on("--secret-stdin", "Read the standalone authority from standard input") { options[:secret_stdin] = true }
+end
+
+begin
+parser.parse!(ARGV)
+
+option_names = {
+  study: "--study",
+  endpoint: "--endpoint",
+  endpoints: "--endpoints",
+  report: "--report",
+  output_dir: "--output-dir",
+  run_id: "--run-id",
+  pilot_accounts: "--pilot-accounts",
+  full_plan: "--full-plan",
+  accounts: "--accounts",
+  owned_objects: "--owned-objects",
+  owner_reserve: "--owner-reserve",
+  secret_stdin: "--secret-stdin"
+}
+allowed_options = {
+  "validate" => %i[study],
+  "capacity-plan" => %i[study],
+  "capacity-config" => %i[output_dir run_id],
+  "capacity-workload" => %i[output_dir run_id pilot_accounts full_plan],
+  "model" => %i[study accounts owned_objects owner_reserve],
+  "baseline" => %i[endpoint],
+  "baseline-set" => %i[endpoints output_dir],
+  "complete-reserves-distribution" => %i[endpoints output_dir],
+  "complete-reserves-import" => %i[report output_dir],
+  "complete-reserves-matrix" => [],
+  "capacity-functional-smoke" => %i[run_id output_dir secret_stdin],
+  "capacity-run-manifest" => %i[run_id pilot_accounts output_dir],
+  "capacity-non-counted-pilot" => %i[run_id pilot_accounts secret_stdin],
+  "sponsor-preflight" => []
+}
+if allowed_options.key?(command)
+  inapplicable_option = options.keys.find { |key| !allowed_options.fetch(command).include?(key) }
+  if inapplicable_option
+    raise OptionParser::InvalidOption,
+          "#{option_names.fetch(inapplicable_option)} is not supported for #{command}"
+  end
+  unless ARGV.empty?
+    raise OptionParser::InvalidArgument, "unexpected argument: #{ARGV.first}"
+  end
+end
+
+case command
+when "validate"
+  study = XrplReserveStudy::Study.new(options.fetch(:study, DEFAULT_STUDY))
+  puts JSON.pretty_generate("valid" => true, "study_id" => study.data.fetch("study_id"))
+when "capacity-plan"
+  puts JSON.pretty_generate(XrplReserveStudy::Study.new(options.fetch(:study, DEFAULT_STUDY)).plan)
+when "capacity-config"
+  run_id = options.fetch(:run_id) do
+    raise OptionParser::MissingArgument, "--run-id"
+  end
+  output_dir = options[:output_dir] || File.join(ROOT, "capacity", "runtime", run_id, "config")
+  renderer = XrplReserveStudy::CandidateConfigRenderer.new
+  puts JSON.pretty_generate(renderer.render(run_id: run_id, output_dir: output_dir))
+when "capacity-workload"
+  run_id = options.fetch(:run_id) do
+    raise OptionParser::MissingArgument, "--run-id"
+  end
+  if options.key?(:pilot_accounts) && options[:full_plan]
+    raise OptionParser::InvalidArgument, "--pilot-accounts and --full-plan are mutually exclusive"
+  end
+  unless options.key?(:pilot_accounts) || options[:full_plan]
+    raise OptionParser::MissingArgument, "--pilot-accounts or --full-plan"
+  end
+
+  if options.key?(:pilot_accounts)
+    scope = "pilot"
+    pilot_accounts = options.fetch(:pilot_accounts)
+    output_name = format("pilot-%09d", pilot_accounts)
+  else
+    scope = "full-plan"
+    pilot_accounts = nil
+    output_name = "full-plan"
+  end
+  output_dir = options[:output_dir] || File.join(
+    ROOT, "capacity", "runtime", run_id, "workload", output_name
+  )
+  generator = XrplReserveStudy::WorkloadGenerator.new
+  puts JSON.pretty_generate(
+    generator.generate(
+      run_id: run_id,
+      scope: scope,
+      pilot_accounts: pilot_accounts,
+      output_dir: output_dir
+    )
+  )
+when "model"
+  study = XrplReserveStudy::Study.new(options.fetch(:study, DEFAULT_STUDY))
+  puts JSON.pretty_generate(
+    study.model(
+      accounts: options.fetch(:accounts, 1_000_000),
+      owned_objects: options.fetch(:owned_objects, 2_000_000),
+      owner_reserve_xrp: options.fetch(:owner_reserve, 0.2)
+    )
+  )
+when "baseline"
+  endpoint = options[:endpoint] || "https://s1.ripple.com:51234"
+  observer = XrplReserveStudy::MainnetObserver.new(endpoint: endpoint)
+  preflight = observer.preflight
+  observation = observer.capture_exact(ledger_index: preflight.fetch("latest_validated_ledger"))
+  puts JSON.pretty_generate(observation.reject { |key, _| key == "raw_response" })
+when "baseline-set"
+  manifest = options[:endpoints] || File.join(ROOT, "study", "mainnet-endpoints-v1.yml")
+  output = options[:output_dir] || File.join(ROOT, "evidence", "generated", "baseline-#{Time.now.utc.strftime('%Y%m%dT%H%M%SZ')}")
+  tracked_status, tracked_status_result = Open3.capture2(
+    "git", "status", "--porcelain", "--untracked-files=no", chdir: ROOT
+  )
+  unless tracked_status_result.success? && tracked_status.empty?
+    raise XrplReserveStudy::ObservationError, "baseline-set requires a clean tracked working tree"
+  end
+  source_commit, commit_result = Open3.capture2("git", "rev-parse", "HEAD", chdir: ROOT)
+  raise XrplReserveStudy::ObservationError, "could not resolve source commit" unless commit_result.success?
+
+  bundle = XrplReserveStudy::BaselineBundle.new(manifest_path: manifest).capture(
+    output_dir: output,
+    source_commit: source_commit.strip
+  )
+  puts JSON.pretty_generate("output_dir" => output, "status" => bundle.fetch("status"), "target_ledger_index" => bundle.fetch("target_ledger_index"))
+  exit 2 unless bundle.fetch("status") == "agreed"
+when "complete-reserves-distribution"
+  evidence_root = File.join(ROOT, "evidence", "generated")
+  output = options[:output_dir] || File.join(
+    evidence_root, "owner-object-distribution-#{Time.now.utc.strftime('%Y%m%dT%H%M%SZ')}"
+  )
+  expanded_output = File.expand_path(output)
+  unless expanded_output.start_with?("#{File.expand_path(evidence_root)}/")
+    raise XrplReserveStudy::OwnerObjectDistributionError,
+          "--output-dir must be inside ignored evidence/generated"
+  end
+  tracked_status, tracked_status_result = Open3.capture2(
+    "git", "status", "--porcelain", "--untracked-files=no", chdir: ROOT
+  )
+  unless tracked_status_result.success? && tracked_status.empty?
+    raise XrplReserveStudy::OwnerObjectDistributionError,
+          "complete-reserves-distribution requires a clean tracked working tree"
+  end
+  source_commit, commit_result = Open3.capture2("git", "rev-parse", "HEAD", chdir: ROOT)
+  raise XrplReserveStudy::OwnerObjectDistributionError, "could not resolve source commit" unless commit_result.success?
+
+  bundle = XrplReserveStudy::OwnerObjectDistribution.new(
+    manifest_path: options[:endpoints] || File.join(ROOT, "study", "owner-object-endpoints-v1.yml")
+  ).capture(output_dir: expanded_output, source_commit: source_commit.strip)
+  puts JSON.pretty_generate(
+    "output_dir" => expanded_output, "status" => bundle.fetch("status"),
+    "evidence_tier" => bundle.fetch("evidence_tier"), "target_ledger_index" => bundle.fetch("target_ledger_index"),
+    "ledger_hash" => bundle.fetch("ledger_hash")
+  )
+when "complete-reserves-import"
+  report = options.fetch(:report) do
+    raise OptionParser::MissingArgument, "--report"
+  end
+  evidence_root = File.join(ROOT, "evidence", "generated")
+  output = options[:output_dir] || File.join(
+    evidence_root, "owner-object-distribution-import-#{Time.now.utc.strftime('%Y%m%dT%H%M%SZ')}"
+  )
+  expanded_output = File.expand_path(output)
+  unless expanded_output.start_with?("#{File.expand_path(evidence_root)}/")
+    raise XrplReserveStudy::OwnerObjectDistributionError,
+          "--output-dir must be inside ignored evidence/generated"
+  end
+  tracked_status, tracked_status_result = Open3.capture2(
+    "git", "status", "--porcelain", "--untracked-files=no", chdir: ROOT
+  )
+  unless tracked_status_result.success? && tracked_status.empty?
+    raise XrplReserveStudy::OwnerObjectDistributionError,
+          "complete-reserves-import requires a clean tracked working tree"
+  end
+  source_commit, commit_result = Open3.capture2("git", "rev-parse", "HEAD", chdir: ROOT)
+  raise XrplReserveStudy::OwnerObjectDistributionError, "could not resolve source commit" unless commit_result.success?
+
+  bundle = XrplReserveStudy::OperatorObjectDistributionImporter.new.import(
+    report_path: report, output_dir: expanded_output, source_commit: source_commit.strip
+  )
+  puts JSON.pretty_generate(
+    "output_dir" => expanded_output, "status" => bundle.fetch("status"),
+    "evidence_tier" => bundle.fetch("evidence_tier"), "target_ledger_index" => bundle.fetch("target_ledger_index"),
+    "ledger_hash" => bundle.fetch("ledger_hash")
+  )
+when "complete-reserves-matrix"
+  XrplReserveStudy::CompleteReservesMatrix.new.call(secret_reader: -> { raise "unreachable" })
+when "capacity-functional-smoke"
+  run_id = options.fetch(:run_id) do
+    raise OptionParser::MissingArgument, "--run-id"
+  end
+  unless options[:secret_stdin]
+    raise OptionParser::MissingArgument, "--secret-stdin"
+  end
+
+  config_dir = File.join(ROOT, "capacity", "runtime", run_id, "config")
+  workload_dir = File.join(ROOT, "capacity", "runtime", run_id, "workload", "pilot-000000001")
+  output_dir = options[:output_dir] || File.join(
+    ROOT, "capacity", "runtime", run_id, "execution", "functional-smoke-000000001"
+  )
+  record = XrplReserveStudy::CapacityFunctionalSmoke.new.run(
+    run_id: run_id,
+    config_dir: config_dir,
+    workload_dir: workload_dir,
+    output_dir: output_dir,
+    secret_reader: -> { XrplReserveStudy::CapacitySecretReader.read(input: $stdin, error: $stderr) }
+  )
+  puts JSON.pretty_generate(record)
+  exit 2 unless record.fetch("status") == "passed"
+when "capacity-run-manifest"
+  run_id = options.fetch(:run_id) do
+    raise OptionParser::MissingArgument, "--run-id"
+  end
+  pilot_accounts = options.fetch(:pilot_accounts) do
+    raise OptionParser::MissingArgument, "--pilot-accounts"
+  end
+  runtime_dir = File.join(ROOT, "capacity", "runtime", run_id)
+  config_dir = File.join(runtime_dir, "config")
+  workload_dir = File.join(runtime_dir, "workload", format("pilot-%09d", pilot_accounts))
+  output_dir = options[:output_dir] || File.join(
+    runtime_dir, "manifests", format("non-counted-pilot-%09d", pilot_accounts)
+  )
+  puts JSON.pretty_generate(
+    XrplReserveStudy::CapacityRunManifest.new.publish(
+      run_id: run_id, pilot_accounts: pilot_accounts, config_dir: config_dir,
+      workload_dir: workload_dir, output_dir: output_dir
+    )
+  )
+when "capacity-non-counted-pilot"
+  run_id = options.fetch(:run_id) do
+    raise OptionParser::MissingArgument, "--run-id"
+  end
+  pilot_accounts = options.fetch(:pilot_accounts) do
+    raise OptionParser::MissingArgument, "--pilot-accounts"
+  end
+  unless options[:secret_stdin]
+    raise OptionParser::MissingArgument, "--secret-stdin"
+  end
+  unless run_id == XrplReserveStudy::CapacityNonCountedPilot::RUN_ID
+    raise OptionParser::InvalidArgument, "--run-id must select the fixed non-counted pilot run"
+  end
+  unless pilot_accounts == XrplReserveStudy::CapacityNonCountedPilot::PILOT_ACCOUNTS
+    raise OptionParser::InvalidArgument, "--pilot-accounts must be 3"
+  end
+  runtime_dir = File.join(ROOT, "capacity", "runtime", run_id)
+  result = XrplReserveStudy::CapacityNonCountedPilot.new.run(
+    run_id: run_id,
+    config_dir: File.join(runtime_dir, "config"),
+    workload_dir: File.join(runtime_dir, "workload", "pilot-000000003"),
+    manifest_dir: File.join(runtime_dir, "manifests", "non-counted-pilot-000000003"),
+    output_dir: File.join(runtime_dir, "execution", "non-counted-pilot-000000003"),
+    secret_reader: -> { XrplReserveStudy::CapacitySecretReader.read(input: $stdin, error: $stderr) }
+  )
+  puts JSON.pretty_generate(result)
+  exit 2 unless result.fetch("status") == "passed" &&
+    result.fetch("disposition_code") == "success" && result.fetch("pilot_complete") == true
+when "sponsor-preflight"
+  XrplReserveStudy::SponsorCalibration::Preflight.new(client: XrplReserveStudy::CapacityRpcClient.new).verify!
+  puts JSON.pretty_generate("amendment" => "Sponsor", "active" => true, "counted_run" => false)
+else
+  warn parser
+  warn "Commands: validate, capacity-plan, capacity-config, capacity-workload, capacity-functional-smoke, capacity-run-manifest, capacity-non-counted-pilot, sponsor-preflight, model, baseline, baseline-set, complete-reserves-distribution, complete-reserves-import, complete-reserves-matrix"
+  exit 64
+end
+rescue XrplReserveStudy::StudyError, XrplReserveStudy::ObservationError, OptionParser::ParseError => e
+  warn "error: #{e.message}"
+  if e.respond_to?(:progress) && e.progress.is_a?(Hash) && e.progress["metric_snapshot_stage"]
+    warn "metric_snapshot_stage: #{e.progress.fetch("metric_snapshot_stage")}"
+  end
+  if e.respond_to?(:progress) && e.progress.is_a?(Hash) && e.progress["transaction_execution_code"]
+    warn "transaction_execution_code: #{e.progress.fetch("transaction_execution_code")}"
+  end
+  if e.respond_to?(:progress) && e.progress.is_a?(Hash) && e.progress["sampling_error_code"]
+    warn "sampling_error_code: #{e.progress.fetch("sampling_error_code")}"
+  end
+  if e.respond_to?(:progress) && e.progress.is_a?(Hash) && e.progress["pilot_failure_stage"]
+    warn "pilot_failure_stage: #{e.progress.fetch("pilot_failure_stage")}"
+  end
+  if e.respond_to?(:progress) && e.progress.is_a?(Hash) && e.progress["sample_progression_mismatches"]
+    warn "sample_progression_mismatches: #{e.progress.fetch("sample_progression_mismatches").join(",")}"
+  end
+  exit 1
+end

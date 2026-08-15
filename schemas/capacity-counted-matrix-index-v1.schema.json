@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:capacity-counted-matrix-index-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "authorization_sha256", "stopped", "entries"],
+  "properties": {
+    "schema_version": {"const": "capacity-counted-matrix-index-v1"},
+    "authorization_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "stopped": {"type": "boolean"},
+    "entries": {"type": "array", "maxItems": 72}
+  }
+}

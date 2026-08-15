@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:owner-object-distribution-bundle-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "evidence_tier", "source_commit", "captured_at", "selection_rule", "target_ledger_index", "ledger_hash", "account_roots", "class_counts", "observations", "class_allocation_tie_break"],
+  "properties": {
+    "schema_version": {"const": "owner-object-distribution-bundle-v1"},
+    "status": {"enum": ["captured", "agreed"]},
+    "evidence_tier": {"enum": ["operator_local", "independently_corroborated"]},
+    "source_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "captured_at": {"type": "string", "format": "date-time"},
+    "selection_rule": {"type": "string"},
+    "target_ledger_index": {"type": "integer", "minimum": 1},
+    "ledger_hash": {"type": "string", "pattern": "^[A-F0-9]{64}$"},
+    "account_roots": {"type": "integer", "minimum": 1},
+    "class_counts": {"type": "object"},
+    "observations": {"type": "array", "minItems": 1, "items": {"oneOf": [{"$ref": "#/definitions/ledger_data_observation"}, {"$ref": "#/definitions/indexed_aggregate_report_observation"}]}},
+    "class_allocation_tie_break": {"const": "ascending-class-name"}
+  },
+  "definitions": {
+    "ledger_data_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observation_method", "endpoint_id", "operator_id", "endpoint", "ledger_index", "ledger_hash", "account_roots", "class_counts", "server_info_sha256", "ledger_data_sha256", "ledger_data_page_sha256"],
+      "properties": {
+        "observation_method": {"const": "ledger_data"},
+        "endpoint_id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "operator_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+        "operator_evidence_url": {"type": "string", "pattern": "^https://"},
+        "endpoint": {"type": "string", "pattern": "^https://"},
+        "ledger_index": {"type": "integer", "minimum": 1},
+        "ledger_hash": {"type": "string", "pattern": "^[A-F0-9]{64}$"},
+        "account_roots": {"type": "integer", "minimum": 1},
+        "class_counts": {"type": "object"},
+        "server_info_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "ledger_data_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "ledger_data_page_sha256": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
+      }
+    },
+    "indexed_aggregate_report_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observation_method", "operator_id", "dataset_type", "ledger_index", "ledger_hash", "account_roots", "class_counts", "query_sha256", "result_sha256", "classifier_version"],
+      "properties": {
+        "observation_method": {"const": "indexed_aggregate_report"},
+        "operator_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+        "operator_evidence_url": {"type": "string", "pattern": "^https://"},
+        "dataset_type": {"enum": ["clio", "rippled", "operator_database"]},
+        "ledger_index": {"type": "integer", "minimum": 1},
+        "ledger_hash": {"type": "string", "pattern": "^[A-F0-9]{64}$"},
+        "account_roots": {"type": "integer", "minimum": 1},
+        "class_counts": {"type": "object"},
+        "query_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "result_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "classifier_version": {"const": "owner-object-classifier-v1"}
+      }
+    }
+  }
+}
