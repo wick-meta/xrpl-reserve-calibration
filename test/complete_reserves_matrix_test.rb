@@ -11,4 +11,19 @@ class CompleteReservesMatrixTest < Minitest::Test
     end
     refute called
   end
+
+  def test_matrix_remains_hard_disabled_after_authorization
+    authorization = Object.new
+    authorization.define_singleton_method(:authorize!) { true }
+    called = false
+
+    error = assert_raises(XrplReserveStudy::CompleteReservesMatrixError) do
+      XrplReserveStudy::CompleteReservesMatrix.new(authorization: authorization).call(
+        secret_reader: -> { called = true; "secret" }
+      )
+    end
+
+    assert_equal "matrix execution is unavailable in this implementation phase", error.message
+    refute called
+  end
 end

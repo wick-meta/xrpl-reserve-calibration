@@ -1,0 +1,15 @@
+schema_version: complete-reserves-profiles-v1
+calibrated:
+  profile_id: complete-reserves-calibrated-v1
+  account_root_targets:
+    - 10000
+    - 25000
+    - 50000
+  warmup_seconds: 300
+  measurement_seconds: 1800
+  counted_run: false
+full_matrix:
+  profile_id: complete-reserves-full-matrix-v1
+  warmup_seconds: 300
+  measurement_seconds: 1800
+  counted_run: false
