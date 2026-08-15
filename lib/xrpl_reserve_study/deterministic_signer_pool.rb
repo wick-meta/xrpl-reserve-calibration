@@ -35,19 +35,22 @@ module XrplReserveStudy
       context = signer_context(role, ordinal)
       authority = @authority_reader.call
       raise SignerPoolError, "missing signing authority" unless authority.is_a?(String) && !authority.empty?
+      raise SignerPoolError, "signing authority must be mutable" if authority.frozen?
 
-      passphrase = OpenSSL::HMAC.hexdigest("SHA256", authority, context)
+      authority_buffer = authority.dup
+      passphrase = OpenSSL::HMAC.hexdigest("SHA256", authority_buffer, context)
       response = @wallet_propose_adapter.wallet_propose(passphrase: passphrase)
       account = response.is_a?(Hash) ? response["account_id"] : nil
       secret = response.is_a?(Hash) ? response["secret"] : nil
       unless account.is_a?(String) && !account.empty? && secret.is_a?(String) && !secret.empty?
         raise SignerPoolError, "private wallet_propose response is invalid"
       end
+      raise SignerPoolError, "private wallet_propose secret must be mutable" if secret.frozen?
 
       record_audit(context, account)
       yield Signer.new(account: account, secret: secret, context: context)
     ensure
-      wipe!(authority)
+      wipe!(authority_buffer)
       wipe!(passphrase)
       wipe!(secret)
     end

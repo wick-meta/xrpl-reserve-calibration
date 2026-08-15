@@ -6,17 +6,25 @@ require_relative "../lib/xrpl_reserve_study"
 
 class DeterministicSignerPoolTest < Minitest::Test
   class CapturingWalletProposeAdapter < XrplReserveStudy::PrivateWalletProposeAdapter
-    attr_reader :passphrase, :received_hmac, :returned_secret
+    attr_reader :passphrases, :received_hmacs, :returned_secrets
+
+    def initialize(response: nil)
+      @response = response
+      @passphrases = []
+      @received_hmacs = []
+      @returned_secrets = []
+    end
 
     def wallet_propose(passphrase:)
-      @passphrase = passphrase
-      @received_hmac = passphrase.dup
-      @returned_secret = +"ephemeral-returned-secret"
-      { "account_id" => "rDeterministicSigner", "secret" => @returned_secret }
+      @passphrases << passphrase
+      @received_hmacs << passphrase.dup
+      response = @response || { "account_id" => "rDeterministicSigner", "secret" => +"ephemeral-returned-secret" }
+      @returned_secrets << response["secret"] if response.is_a?(Hash) && response["secret"].is_a?(String)
+      response
     end
   end
 
-  def test_derives_the_expected_context_and_erases_runtime_secrets_after_yield
+  def test_derives_the_expected_context_without_consuming_reader_owned_authority
     authority = +"runtime-authority"
     adapter = CapturingWalletProposeAdapter.new
     pool = XrplReserveStudy::SignerPool.new(
@@ -34,10 +42,71 @@ class DeterministicSignerPoolTest < Minitest::Test
     assert_equal "rDeterministicSigner", observed.fetch(:account)
     assert_equal "ephemeral-returned-secret", observed.fetch(:secret)
     assert_equal expected_context, observed.fetch(:context)
-    assert_equal OpenSSL::HMAC.hexdigest("SHA256", "runtime-authority", expected_context), adapter.received_hmac
-    assert_empty authority
-    assert_empty adapter.passphrase
-    assert_empty adapter.returned_secret
+    assert_equal OpenSSL::HMAC.hexdigest("SHA256", "runtime-authority", expected_context), adapter.received_hmacs.fetch(0)
+    assert_equal "runtime-authority", authority
+    assert_empty adapter.passphrases.fetch(0)
+    assert_empty adapter.returned_secrets.fetch(0)
+  end
+
+  def test_reuses_one_reader_authority_for_multiple_signers
+    authority = +"runtime-authority"
+    adapter = CapturingWalletProposeAdapter.new
+    pool = XrplReserveStudy::SignerPool.new(
+      profile_id: "profile", cell_id: "cell", authority_reader: -> { authority }, wallet_propose_adapter: adapter
+    )
+
+    pool.with_signer(role: "owner", ordinal: 0) { |_signer| :first }
+    pool.with_signer(role: "owner", ordinal: 1) { |_signer| :second }
+
+    assert_equal "runtime-authority", authority
+    assert_equal 2, adapter.received_hmacs.length
+    assert_equal 2, pool.audit_records.length
+    assert adapter.passphrases.all?(&:empty?)
+    assert adapter.returned_secrets.all?(&:empty?)
+  end
+
+  def test_wipes_local_runtime_buffers_when_the_signer_block_raises
+    authority = +"runtime-authority"
+    adapter = CapturingWalletProposeAdapter.new
+    pool = XrplReserveStudy::SignerPool.new(
+      profile_id: "profile", cell_id: "cell", authority_reader: -> { authority }, wallet_propose_adapter: adapter
+    )
+
+    assert_raises(RuntimeError) { pool.with_signer(role: "owner", ordinal: 0) { raise "boom" } }
+
+    assert_equal "runtime-authority", authority
+    assert_empty adapter.passphrases.fetch(0)
+    assert_empty adapter.returned_secrets.fetch(0)
+  end
+
+  def test_rejects_invalid_wallet_response_and_wipes_derived_passphrase
+    adapter = CapturingWalletProposeAdapter.new(response: { "account_id" => "rDeterministicSigner" })
+    pool = XrplReserveStudy::SignerPool.new(
+      profile_id: "profile", cell_id: "cell", authority_reader: -> { +"runtime-authority" }, wallet_propose_adapter: adapter
+    )
+
+    error = assert_raises(XrplReserveStudy::SignerPoolError) { pool.with_signer(role: "owner", ordinal: 0) { |_signer| } }
+
+    assert_equal "private wallet_propose response is invalid", error.message
+    assert_empty adapter.passphrases.fetch(0)
+  end
+
+  def test_rejects_frozen_authority_and_returned_secret
+    adapter = CapturingWalletProposeAdapter.new
+    frozen_authority_pool = XrplReserveStudy::SignerPool.new(
+      profile_id: "profile", cell_id: "cell", authority_reader: -> { "frozen-authority".freeze }, wallet_propose_adapter: adapter
+    )
+    authority_error = assert_raises(XrplReserveStudy::SignerPoolError) { frozen_authority_pool.with_signer(role: "owner", ordinal: 0) { |_signer| } }
+
+    frozen_secret_adapter = CapturingWalletProposeAdapter.new(response: { "account_id" => "rDeterministicSigner", "secret" => "frozen-secret".freeze })
+    frozen_secret_pool = XrplReserveStudy::SignerPool.new(
+      profile_id: "profile", cell_id: "cell", authority_reader: -> { +"runtime-authority" }, wallet_propose_adapter: frozen_secret_adapter
+    )
+    secret_error = assert_raises(XrplReserveStudy::SignerPoolError) { frozen_secret_pool.with_signer(role: "owner", ordinal: 0) { |_signer| } }
+
+    assert_equal "signing authority must be mutable", authority_error.message
+    assert_equal "private wallet_propose secret must be mutable", secret_error.message
+    assert_empty frozen_secret_adapter.passphrases.fetch(0)
   end
 
   def test_audit_records_include_only_context_and_a_public_account_hash

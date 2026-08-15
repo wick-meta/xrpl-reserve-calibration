@@ -26,7 +26,11 @@ module XrplReserveStudy
 
     class << self
       def recipes
-        @recipes ||= definitions.map { |definition| build_recipe(**definition) }.to_h { |recipe| [recipe.kind, recipe] }.freeze
+        @recipes ||= begin
+          declared = definitions
+          validate_definitions!(declared)
+          declared.map { |definition| build_recipe(**definition) }.to_h { |recipe| [recipe.kind, recipe] }.freeze
+        end
       end
 
       private
@@ -35,8 +39,8 @@ module XrplReserveStudy
         Recipe.new(
           kind: kind.freeze,
           required_amendments: amendments.map(&:freeze).freeze,
-          creation_steps: create.map { |type| { "transaction_type" => type }.freeze }.freeze,
-          cleanup_steps: cleanup.map { |type| { "transaction_type" => type }.freeze }.freeze,
+          creation_steps: build_steps(create),
+          cleanup_steps: build_steps(cleanup),
           finality_query: finality.freeze,
           owner_delta: owner_delta,
           derived: derived
@@ -49,7 +53,7 @@ module XrplReserveStudy
           { kind: "deposit_preauthorization", create: ["DepositPreauth"], cleanup: ["DepositPreauth"], finality: account_objects("DepositPreauth") },
           { kind: "escrow", create: ["EscrowCreate"], cleanup: ["EscrowCancel"], finality: account_objects("Escrow") },
           { kind: "nftoken_offer", amendments: ["NonFungibleTokensV1_1"], create: ["NFTokenCreateOffer"], cleanup: ["NFTokenCancelOffer"], finality: account_objects("NFTokenOffer") },
-          { kind: "nftoken_page", amendments: ["NonFungibleTokensV1_1"], create: ["NFTokenMint"], cleanup: ["NFTokenBurn"], finality: account_objects("NFTokenPage"), derived: true },
+          { kind: "nftoken_page", amendments: ["NonFungibleTokensV1_1"], create: [{ "transaction_type" => "NFTokenMint", "direct_injection" => false, "validated_observation" => true }], cleanup: ["NFTokenBurn"], finality: account_objects("NFTokenPage"), derived: true },
           { kind: "offer", create: ["OfferCreate"], cleanup: ["OfferCancel"], finality: account_objects("Offer") },
           { kind: "oracle", amendments: ["PriceOracle"], create: ["OracleSet"], cleanup: ["OracleDelete"], finality: account_objects("Oracle") },
           { kind: "payment_channel", create: ["PaymentChannelCreate"], cleanup: ["PaymentChannelClaim"], finality: account_objects("PayChannel") },
@@ -64,8 +68,23 @@ module XrplReserveStudy
           { kind: "permissioned_domain", amendments: ["PermissionedDomains"], create: ["PermissionedDomainSet"], cleanup: ["PermissionedDomainDelete"], finality: account_objects("PermissionedDomain") },
           { kind: "delegate", amendments: ["PermissionDelegation"], create: ["DelegateSet"], cleanup: ["DelegateSet"], finality: account_objects("Delegate") },
           { kind: "xchain_owned_claim_id", amendments: ["XChainBridge"], create: ["XChainCreateClaimID"], cleanup: ["XChainClaim"], finality: account_objects("XChainOwnedClaimID") },
-          { kind: "xchain_owned_create_account_claim_id", amendments: ["XChainBridge"], create: ["XChainCreateClaimID"], cleanup: ["XChainClaim"], finality: account_objects("XChainOwnedCreateAccountClaimID") }
+          { kind: "xchain_owned_create_account_claim_id", amendments: ["XChainBridge"], create: ["XChainAccountCreateCommit", { "transaction_type" => "XChainAddAccountCreateAttestation", "attestation" => "first", "effect" => "creates_owned_object" }], cleanup: [{ "transaction_type" => "XChainAddAccountCreateAttestation", "attestation" => "required_completion", "effect" => "destroys_owned_object", "protocol_driven" => true }], finality: account_objects("XChainOwnedCreateAccountClaimID") }
         ].freeze
+      end
+
+      def validate_definitions!(declared)
+        kinds = declared.map { |definition| definition.fetch(:kind) }
+        raise OwnerObjectRecipeRegistryError, "owner object recipe kinds must be unique" unless kinds.uniq.length == kinds.length
+        unless kinds.sort == OwnerObjectDistribution::CLASSIFIERS.values.sort
+          raise OwnerObjectRecipeRegistryError, "owner object recipes must match classifiers"
+        end
+      end
+
+      def build_steps(steps)
+        steps.map do |step|
+          value = step.is_a?(Hash) ? step : { "transaction_type" => step }
+          value.transform_keys(&:to_s).freeze
+        end.freeze
       end
 
       def account_objects(entry_type)
