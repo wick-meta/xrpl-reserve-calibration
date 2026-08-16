@@ -2,7 +2,9 @@
 
 require "fileutils"
 require "minitest/autorun"
+require "stringio"
 require "tmpdir"
+require "zlib"
 require_relative "../lib/xrpl_reserve_study"
 
 class VerifiedStateSnapshotTest < Minitest::Test
@@ -182,6 +184,48 @@ class VerifiedStateSnapshotTest < Minitest::Test
   # Break caught: lowercase hex encoded local identity was accepted as opaque runtime bytes.
   def test_rejects_lowercase_hex_encoded_machine_identity
     File.binwrite(File.join(@state, "ledger.db"), "machine_id=operator-7".unpack1("H*"))
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: a local identity embedded in otherwise binary database bytes bypassed text-only checks.
+  def test_rejects_machine_identity_embedded_in_binary_state
+    File.binwrite(File.join(@state, "ledger.db"), "\xFF\x00machine_id=operator-7\x00\xFF".b)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: serialized state could carry identity fields while remaining invalid as a whole text encoding.
+  def test_rejects_machine_identity_in_marshaled_state
+    File.binwrite(File.join(@state, "ledger.db"), Marshal.dump({ "machine_id" => "operator-7" }))
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: compressed state could hide identity fields from the outer byte scanner.
+  def test_rejects_machine_identity_in_gzip_state
+    output = StringIO.new("".b, "w")
+    Zlib::GzipWriter.wrap(output) { |gzip| gzip.write("machine_id=operator-7") }
+    File.binwrite(File.join(@state, "ledger.db"), output.string)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: unknown binary database formats were previously admitted without a parser or allowlist.
+  def test_rejects_ambiguous_binary_state
+    File.binwrite(File.join(@state, "ledger.db"), "\x01\x02\x03\x04".b)
 
     error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
       @publisher.publish(identity: identity, seed_result: seed_result)

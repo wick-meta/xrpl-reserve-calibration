@@ -10,6 +10,26 @@ module XrplReserveStudy
   class RunCloneManager
     BINDING_KEYS = %w[candidate_image_digest study_sha256 distribution_sha256 config_sha256 source_sha256 ledger].freeze
 
+    # A runtime launch capability bound to already-open, no-follow directory
+    # descriptors. Deliberately exposes no filesystem path: adapters must use
+    # the descriptors while #start_clone! is executing and may not re-resolve
+    # an attacker-replaceable clone name.
+    class BoundCloneImage
+      attr_reader :descriptor, :state_descriptor, :identity, :state_identity, :directory_handle, :state_handle
+
+      def initialize(directory:, state:)
+        @directory = directory
+        @state = state
+        @directory_handle = directory
+        @state_handle = state
+        @descriptor = directory.descriptor
+        @state_descriptor = state.descriptor
+        @identity = directory.identity.freeze
+        @state_identity = state.identity.freeze
+        freeze
+      end
+    end
+
     def initialize(verifier:, runtime:, runtime_root: RuntimePublisher::RUNTIME_ROOT)
       @verifier = verifier
       @runtime = runtime
@@ -46,16 +66,20 @@ module XrplReserveStudy
     end
 
     def start(clone:, run:)
-      record = verify_clone!(clone)
-      @verifier.verify!(clone.fetch("snapshot"))
-      raise RunCloneManagerError, "clone does not match verified snapshot" unless
-        record.fetch("snapshot_sha256") == snapshot_digest(clone.fetch("snapshot"))
-      expected = run_bindings!(run)
-      raise RunCloneManagerError, "run does not match clone bindings" unless record.fetch("bindings") == expected &&
-        record.fetch("run_id") == run.fetch("run_id") && record.fetch("repetition") == run.fetch("repetition")
-      raise RunCloneManagerError, "checkout clone runtime adapter is invalid" unless @runtime.respond_to?(:start_clone!)
-      consume_clone!(clone.fetch("path"))
-      @runtime.start_clone!(path: clone.fetch("path"), run: run)
+      with_bound_clone(clone) do |bound|
+        record = verify_bound_clone!(clone, bound)
+        @verifier.verify!(clone.fetch("snapshot"))
+        ensure_bound_clone_unchanged!(clone, bound)
+        raise RunCloneManagerError, "clone does not match verified snapshot" unless
+          record.fetch("snapshot_sha256") == snapshot_digest(clone.fetch("snapshot"))
+        expected = run_bindings!(run)
+        raise RunCloneManagerError, "run does not match clone bindings" unless record.fetch("bindings") == expected &&
+          record.fetch("run_id") == run.fetch("run_id") && record.fetch("repetition") == run.fetch("repetition")
+        raise RunCloneManagerError, "checkout clone runtime adapter is invalid" unless @runtime.respond_to?(:start_clone!)
+        consume_bound_clone!(bound)
+        ensure_bound_clone_unchanged!(clone, bound)
+        @runtime.start_clone!(image: bound, run: run)
+      end
     rescue RunCloneManagerError
       raise
     rescue StandardError => error
@@ -80,11 +104,11 @@ module XrplReserveStudy
       BINDING_KEYS.to_h { |key| [key, run.fetch(key)] }
     end
 
-    def verify_clone!(clone)
+    def verify_bound_clone!(clone, bound)
       valid = clone.is_a?(Hash) && clone["path"].is_a?(String) && clone["snapshot"].is_a?(Hash)
       raise RunCloneManagerError, "invalid run clone" unless valid
       reject_unsafe_clone_path!(clone.fetch("path"))
-      stored = JSON.parse(File.binread(File.join(clone.fetch("path"), "clone.json")))
+      stored = JSON.parse(read_bound_file!(bound.descriptor, "clone.json"))
       valid_record = stored.is_a?(Hash) && stored.keys.sort == %w[bindings files repetition run_id schema_version snapshot_id snapshot_sha256] &&
         stored["schema_version"] == "complete-reserves-run-clone-v1" && stored["snapshot_id"].is_a?(String) &&
         stored["run_id"].is_a?(String) && stored["repetition"].is_a?(Integer) && sha?(stored["snapshot_sha256"])
@@ -93,9 +117,11 @@ module XrplReserveStudy
       raise RunCloneManagerError, "invalid run clone" unless clone.fetch("path") == expected_path
       expected = clone.reject { |key, _| %w[path snapshot].include?(key) }
       raise RunCloneManagerError, "clone record does not match image" unless stored == expected
-      raise RunCloneManagerError, "clone state manifest does not match image" unless manifest!(File.join(clone.fetch("path"), "state")) == clone.fetch("files")
+      raise RunCloneManagerError, "clone state manifest does not match image" unless
+        bound_manifest!(bound.state_handle, clone.fetch("files")) == clone.fetch("files") &&
+        manifest!(File.join(clone.fetch("path"), "state")) == clone.fetch("files")
       stored
-    rescue Errno::ENOENT, JSON::ParserError
+    rescue Errno::ENOENT, Errno::ELOOP, Errno::ENOTDIR, JSON::ParserError
       raise RunCloneManagerError, "clone image is incomplete"
     end
 
@@ -173,13 +199,69 @@ module XrplReserveStudy
       raise RunCloneManagerError, "invalid verified snapshot"
     end
 
-    def consume_clone!(path)
-      lock = File.join(path, ".consumed")
-      File.open(lock, File::WRONLY | File::CREAT | File::EXCL | File::NOFOLLOW, 0o600) { |file| file.write("consumed\n") }
+    def consume_bound_clone!(bound)
+      file = RuntimePublisher::Native.open_file_at(bound.descriptor, ".consumed", "w")
+      file.write("consumed\n")
+      file.flush
+      RuntimePublisher::Native.sync(file.fileno)
     rescue Errno::EEXIST, Errno::ELOOP
       raise RunCloneManagerError, "clone has already been consumed"
     rescue SystemCallError => error
       raise RunCloneManagerError, "could not consume run clone: #{error.message}"
+    ensure
+      file&.close unless file&.closed?
+    end
+
+    def with_bound_clone(clone)
+      valid = clone.is_a?(Hash) && clone["path"].is_a?(String) && clone["snapshot"].is_a?(Hash)
+      raise RunCloneManagerError, "invalid run clone" unless valid
+      reject_unsafe_clone_path!(clone.fetch("path"))
+      name = File.basename(clone.fetch("path"))
+      handles = [RuntimePublisher::DirectoryHandle.open(@runtime_root)]
+      %w[complete-reserves clones].each { |component| handles << handles.last.open_child(component, create: false) }
+      handles << handles.last.open_child(name, create: false)
+      handles << handles.last.open_child("state", create: false)
+      bound = BoundCloneImage.new(directory: handles[-2], state: handles[-1])
+      ensure_bound_clone_unchanged!(clone, bound)
+      yield bound
+    rescue RuntimePublisher::Native::UnsupportedPlatformError, Errno::ENOENT, Errno::ELOOP, Errno::ENOTDIR, ArgumentError
+      raise RunCloneManagerError, "invalid run clone"
+    ensure
+      handles&.reverse_each(&:close)
+    end
+
+    def ensure_bound_clone_unchanged!(clone, bound)
+      clone_stat = File.lstat(clone.fetch("path"))
+      state_stat = File.lstat(File.join(clone.fetch("path"), "state"))
+      valid = clone_stat.directory? && !clone_stat.symlink? && state_stat.directory? && !state_stat.symlink? &&
+        [clone_stat.dev, clone_stat.ino] == bound.identity && [state_stat.dev, state_stat.ino] == bound.state_identity
+      raise RunCloneManagerError, "clone root or directory changed before start" unless valid
+    rescue Errno::ENOENT, Errno::ELOOP, Errno::ENOTDIR
+      raise RunCloneManagerError, "clone root or directory changed before start"
+    end
+
+    def read_bound_file!(descriptor, name)
+      file = RuntimePublisher::Native.open_read_at(descriptor, name)
+      file.read
+    ensure
+      file&.close unless file&.closed?
+    end
+
+    def bound_manifest!(state_handle, expected)
+      expected.map do |entry|
+        components = entry.fetch("name").split(File::SEPARATOR)
+        parent = state_handle
+        opened = []
+        components[0...-1].each do |component|
+          child = parent.open_child(component, create: false)
+          opened << child
+          parent = child
+        end
+        bytes = read_bound_file!(parent.descriptor, components.last)
+        { "name" => entry.fetch("name"), "bytes" => bytes.bytesize, "sha256" => Digest::SHA256.hexdigest(bytes) }
+      ensure
+        opened&.reverse_each(&:close)
+      end.sort_by { |entry| entry.fetch("name") }
     end
 
     def reject_unsafe_clone_path!(path)

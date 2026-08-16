@@ -20,7 +20,11 @@ module XrplReserveStudy
     FORBIDDEN_KEY = /secret|seed|private.?key|master.?key|endpoint|host|user|path|url/i
     FORBIDDEN_TEXT = /(?:\A[rs][1-9A-HJ-NP-Za-km-z]{20,}\z|https?:\/\/|\b(?:mainnet|testnet|localhost)\b|(?:secret|seed|private.?key|master.?key|endpoint|host|user|path)\s*[=:])/i
     LOCAL_IDENTITY = /machine|operator|location|hostname|host|user|path|endpoint|secret|seed|private.?key|master.?key/i
-    SAFE_OPAQUE_TEXT = /\A[a-z0-9.-]+\z/
+    # The only opaque format admitted without a parser is the deliberately
+    # content-free fake-state image used by the bounded Task 4 harness. Real
+    # candidate database formats stay fail-closed until concrete runtime work
+    # implements their format-specific parser/scrubber.
+    FAKE_STATE_BYTE = 0xFF
     SEED_RESULT_KEYS = %w[schema_version profile_id cell_id counted_run elapsed_seconds attempted_transactions validated_transactions burned_fee_drops locked_xrp_drops released_xrp_drops finality classified_ledger_evidence resource_snapshots].freeze
 
     def initialize(runtime:, runtime_root: RuntimePublisher::RUNTIME_ROOT)
@@ -150,7 +154,7 @@ module XrplReserveStudy
           next
         elsif stat.file?
           reject_state_name!(relative)
-          reject_state_content!(path)
+          reject_state_content!(path, relative)
           entries << { "name" => relative, "bytes" => stat.size, "sha256" => Digest::SHA256.file(path).hexdigest }
         else
           raise VerifiedStateSnapshotError, "runtime state contains symlink or device"
@@ -273,8 +277,8 @@ module XrplReserveStudy
       raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if name.match?(LOCAL_IDENTITY)
     end
 
-    def reject_state_content!(path)
-      reject_state_bytes!(File.binread(path))
+    def reject_state_content!(path, name)
+      reject_state_bytes!(File.binread(path), name: name)
     end
 
     def reject_sensitive!(value)
@@ -325,12 +329,10 @@ module XrplReserveStudy
       raise VerifiedStateSnapshotError, "invalid snapshot directory binding" unless valid
     end
 
-    def reject_state_bytes!(bytes)
+    def reject_state_bytes!(bytes, name:)
       raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless bytes.is_a?(String) && !bytes.empty?
-      [Encoding::UTF_8, Encoding::UTF_16LE, Encoding::UTF_16BE, Encoding::UTF_32LE, Encoding::UTF_32BE].each do |encoding|
-        value = bytes.dup.force_encoding(encoding)
-        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if value.valid_encoding?
-      end
+      valid_fake_state = safe_relative?(name) && bytes.each_byte.all? { |byte| byte == FAKE_STATE_BYTE }
+      raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless valid_fake_state
     end
 
     def with_bound_snapshot(snapshot)
@@ -374,7 +376,7 @@ module XrplReserveStudy
         end
         bytes = read_bound_file!(parent, components.last)
         reject_state_name!(entry.fetch("name"))
-        reject_state_bytes!(bytes)
+        reject_state_bytes!(bytes, name: entry.fetch("name"))
         { "name" => entry.fetch("name"), "bytes" => bytes.bytesize, "sha256" => Digest::SHA256.hexdigest(bytes) }
       ensure
         opened&.reverse_each(&:close)

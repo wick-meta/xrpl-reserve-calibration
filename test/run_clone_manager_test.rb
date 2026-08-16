@@ -14,8 +14,8 @@ class RunCloneManagerTest < Minitest::Test
       @started = []
     end
 
-    def start_clone!(path:, run:)
-      @started << [path, run]
+    def start_clone!(image:, run:)
+      @started << [image.identity, image.state_identity, run]
       true
     end
   end
@@ -23,12 +23,15 @@ class RunCloneManagerTest < Minitest::Test
   class Verifier
     attr_reader :verified
 
+    attr_accessor :after_verify
+
     def initialize
       @verified = []
     end
 
     def verify!(snapshot)
       @verified << snapshot
+      @after_verify&.call(@verified.length)
       true
     end
   end
@@ -70,7 +73,8 @@ class RunCloneManagerTest < Minitest::Test
     clone = @manager.prepare(snapshot: @snapshot, run: run_record)
     @manager.start(clone: clone, run: run_record)
 
-    assert_equal [[clone.fetch("path"), run_record]], @runtime.started
+    assert_equal 1, @runtime.started.length
+    assert_equal run_record, @runtime.started.first.last
     wrong_run = run_record.merge("distribution_sha256" => "0" * 64)
     error = assert_raises(XrplReserveStudy::RunCloneManagerError) { @manager.start(clone: clone, run: wrong_run) }
     assert_equal "run does not match clone bindings", error.message
@@ -132,6 +136,53 @@ class RunCloneManagerTest < Minitest::Test
     assert_equal "clone root must not contain symlinks", error.message
   ensure
     FileUtils.rm_rf(outside) if outside
+  end
+
+  # Break caught: a verified clone path was re-resolved after a callback could replace it with a symlink.
+  def test_rejects_clone_swap_after_verification_without_consuming_or_starting_replacement
+    clone = @manager.prepare(snapshot: @snapshot, run: run_record)
+    replacement = File.join(@runtime_root, "replacement-clone")
+    @verifier.after_verify = lambda do |count|
+      next unless count == 2
+
+      File.rename(clone.fetch("path"), replacement)
+      FileUtils.ln_s(replacement, clone.fetch("path"))
+    end
+
+    error = assert_raises(XrplReserveStudy::RunCloneManagerError) do
+      @manager.start(clone: clone, run: run_record)
+    end
+
+    assert_equal "clone root or directory changed before start", error.message
+    refute File.exist?(File.join(replacement, ".consumed"))
+    assert_empty @runtime.started
+  end
+
+  # Break caught: two concurrent starters could both pass path verification before either consumed the clone.
+  def test_concurrent_starters_launch_exactly_one_descriptor_bound_image
+    clone = @manager.prepare(snapshot: @snapshot, run: run_record)
+    ready = Queue.new
+    release = Queue.new
+
+    results = 2.times.map do
+      Thread.new do
+        ready << true
+        release.pop
+        begin
+          @manager.start(clone: clone, run: run_record)
+          :started
+        rescue XrplReserveStudy::RunCloneManagerError => error
+          error.message
+        end
+      end
+    end
+    2.times { ready.pop }
+    2.times { release << true }
+    outcomes = results.map(&:value)
+
+    assert_equal 1, outcomes.count(:started)
+    assert_equal 1, outcomes.count("clone has already been consumed")
+    assert_equal 1, @runtime.started.length
   end
 
   private
