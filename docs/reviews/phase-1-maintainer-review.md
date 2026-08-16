@@ -1,5 +1,11 @@
 # Phase 1 maintainer self-review
 
+> **Historical / superseded:** This review records the earlier Phase 1 design
+> and its 72-run matrix. The current study uses the complete-reserves design
+> documented in the [methodology](../methodology.md) and the staged operator
+> sequence in the [README](../../README.md). This file is retained for
+> provenance and must not be read as the current execution plan or evidence.
+
 Reviewer: `wick-meta` project maintainer, performed with Codex assistance
 
 Date: 2026-08-03
