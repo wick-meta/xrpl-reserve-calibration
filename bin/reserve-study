@@ -25,6 +25,8 @@ parser = OptionParser.new do |opts|
   opts.on("--owned-objects N", Integer, "Owner-reserve object population") { |value| options[:owned_objects] = value }
   opts.on("--owner-reserve XRP", Float, "Owner reserve in XRP") { |value| options[:owner_reserve] = value }
   opts.on("--secret-stdin", "Read the standalone authority from standard input") { options[:secret_stdin] = true }
+  opts.on("--profile NAME", "Complete-reserves profile selector") { |value| options[:profile] = value }
+  opts.on("--json-stdin", "Read one complete-reserves planning document from standard input") { options[:json_stdin] = true }
 end
 
 begin
@@ -42,7 +44,9 @@ option_names = {
   accounts: "--accounts",
   owned_objects: "--owned-objects",
   owner_reserve: "--owner-reserve",
-  secret_stdin: "--secret-stdin"
+  secret_stdin: "--secret-stdin",
+  profile: "--profile",
+  json_stdin: "--json-stdin"
 }
 allowed_options = {
   "validate" => %i[study],
@@ -55,6 +59,10 @@ allowed_options = {
   "complete-reserves-distribution" => %i[endpoints output_dir],
   "complete-reserves-import" => %i[report output_dir],
   "complete-reserves-matrix" => [],
+  "complete-reserves-preflight" => %i[profile],
+  "complete-reserves-profile" => %i[profile json_stdin],
+  "complete-reserves-benchmark" => %i[profile json_stdin],
+  "complete-reserves-plan" => %i[profile json_stdin],
   "capacity-functional-smoke" => %i[run_id output_dir secret_stdin],
   "capacity-run-manifest" => %i[run_id pilot_accounts output_dir],
   "capacity-non-counted-pilot" => %i[run_id pilot_accounts secret_stdin],
@@ -210,6 +218,24 @@ when "complete-reserves-import"
   )
 when "complete-reserves-matrix"
   XrplReserveStudy::CompleteReservesMatrix.new.call(secret_reader: -> { raise "unreachable" })
+when "complete-reserves-preflight"
+  profile = options.fetch(:profile) { raise OptionParser::MissingArgument, "--profile" }
+  puts JSON.pretty_generate(XrplReserveStudy::CompleteReservesPlanner.new.preflight(profile: profile))
+when "complete-reserves-profile", "complete-reserves-benchmark", "complete-reserves-plan"
+  profile = options.fetch(:profile) { raise OptionParser::MissingArgument, "--profile" }
+  raise OptionParser::MissingArgument, "--json-stdin" unless options[:json_stdin]
+  input_bytes = $stdin.read(16_777_217)
+  if input_bytes.bytesize > 16_777_216 || input_bytes.empty?
+    raise XrplReserveStudy::CompleteReservesExecutorError, "invalid complete reserves planning input"
+  end
+  input = JSON.parse(input_bytes)
+  planner = XrplReserveStudy::CompleteReservesPlanner.new
+  method = {
+    "complete-reserves-profile" => :profile,
+    "complete-reserves-benchmark" => :benchmark,
+    "complete-reserves-plan" => :plan
+  }.fetch(command)
+  puts JSON.pretty_generate(planner.public_send(method, profile: profile, input: input))
 when "capacity-functional-smoke"
   run_id = options.fetch(:run_id) do
     raise OptionParser::MissingArgument, "--run-id"
@@ -284,10 +310,10 @@ when "sponsor-preflight"
   puts JSON.pretty_generate("amendment" => "Sponsor", "active" => true, "counted_run" => false)
 else
   warn parser
-  warn "Commands: validate, capacity-plan, capacity-config, capacity-workload, capacity-functional-smoke, capacity-run-manifest, capacity-non-counted-pilot, sponsor-preflight, model, baseline, baseline-set, complete-reserves-distribution, complete-reserves-import, complete-reserves-matrix"
+  warn "Commands: validate, capacity-plan, capacity-config, capacity-workload, capacity-functional-smoke, capacity-run-manifest, capacity-non-counted-pilot, sponsor-preflight, model, baseline, baseline-set, complete-reserves-distribution, complete-reserves-import, complete-reserves-preflight, complete-reserves-profile, complete-reserves-benchmark, complete-reserves-plan, complete-reserves-matrix"
   exit 64
 end
-rescue XrplReserveStudy::StudyError, XrplReserveStudy::ObservationError, OptionParser::ParseError => e
+rescue XrplReserveStudy::StudyError, XrplReserveStudy::ObservationError, OptionParser::ParseError, JSON::ParserError => e
   warn "error: #{e.message}"
   if e.respond_to?(:progress) && e.progress.is_a?(Hash) && e.progress["metric_snapshot_stage"]
     warn "metric_snapshot_stage: #{e.progress.fetch("metric_snapshot_stage")}"

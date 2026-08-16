@@ -15,6 +15,48 @@ class CompleteReservesArtifactsTest < Minitest::Test
     assert_raises(XrplReserveStudy::CompleteReservesArtifactsError) { artifacts.publish_disposition(result: result.merge("secret" => "no"), summary: {}) }
   end
 
+  # Break caught: accepting a run-id-only resume marker or a partially changed
+  # execution directory without rechecking every published byte.
+  def test_publishes_and_reverifies_complete_execution_bundle_for_resume
+    artifacts = XrplReserveStudy::CompleteReservesArtifacts.new
+    binding = execution_item.slice("profile_id", "profile_sha256", "distribution_sha256", "candidate_sha256")
+    metrics = [security_baseline.merge(binding)] + %w[account-burst object-burst mixed churn recovery].map.with_index do |workload_id, index|
+      security_observed.merge(binding).merge(
+        "workload_id" => workload_id,
+        "attempted_transactions" => workload_id == "recovery" ? 100 : 500,
+        "validated_transactions" => workload_id == "recovery" ? 100 : 500,
+        "artifact_sha256" => format("%064x", index + 10)
+      )
+    end
+    security = metrics.drop(1).map do |observed|
+      XrplReserveStudy::SecurityWorkload.new.evaluate(baseline: metrics.first, observed: observed)
+    end
+    result = execution_result(metrics: metrics, security: security)
+    resume = {
+      "schema_version" => "complete-reserves-resume-v1", "run_id" => result.fetch("run_id"),
+      "schedule_item_sha256" => result.fetch("schedule_item_sha256"),
+      "reset_confirmed" => true, "recovery_confirmed" => true
+    }
+
+    published = artifacts.publish_execution_bundle(
+      result: result, metrics: metrics, security_evaluations: security, resume_record: resume
+    )
+    record = published.fetch("resume_record")
+
+    assert_match(/\A[0-9a-f]{64}\z/, published.fetch("result_artifact_sha256"))
+    assert_equal published.fetch("result_artifact_sha256"), record.fetch("result_artifact_sha256")
+    assert_equal result, artifacts.verify_execution_resume(record: record, item: execution_item)
+    output = File.join(XrplReserveStudy::RuntimePublisher::RUNTIME_ROOT, "complete-reserves", "executions", result.fetch("run_id"))
+    assert_equal %w[SHA256SUMS bindings.json metrics.json result.json resume.json security.json], Dir.children(output).sort
+
+    File.binwrite(File.join(output, "metrics.json"), "[]\n")
+    assert_raises(XrplReserveStudy::CompleteReservesArtifactsError) do
+      artifacts.verify_execution_resume(record: record, item: execution_item)
+    end
+  ensure
+    FileUtils.rm_rf(output) if output&.start_with?(XrplReserveStudy::RuntimePublisher::RUNTIME_ROOT + File::SEPARATOR)
+  end
+
 
   # Break caught: publishing scheduler/security evidence without verifying its
   # benchmark hash chain or producing checksums for every planning artifact.
@@ -138,6 +180,31 @@ class CompleteReservesArtifactsTest < Minitest::Test
   end
 
   private
+
+  def execution_item
+    {
+      "run_id" => "cal-a000000002-o000000020-r98",
+      "profile_id" => "complete-reserves-calibrated-v1", "profile_sha256" => "e" * 64,
+      "schedule_sha256" => "b" * 64, "schedule_item_sha256" => "1" * 64,
+      "security_config_sha256" => XrplReserveStudy::SecurityWorkload.new.security_config_sha256,
+      "distribution_sha256" => "d" * 64, "candidate_sha256" => "c" * 64,
+      "network_scope" => "isolated-network-only", "counted_run" => false,
+      "execution_authorized" => false
+    }
+  end
+
+  def execution_result(metrics:, security:)
+    execution_item.merge(
+      "schema_version" => "complete-reserves-execution-result-v1", "status" => "passed",
+      "snapshot_id" => "calibration-base", "ledger" => {
+        "network_id" => "candidate-task6", "ledger_index" => 25, "ledger_hash" => "f" * 64,
+        "account_roots" => 2, "class_counts" => { "offer" => 1 }
+      },
+      "workload_artifact_sha256" => metrics.to_h { |record| [record.fetch("workload_id"), record.fetch("artifact_sha256")] },
+      "security_sha256" => security.to_h { |record| [record.fetch("workload_id"), record.fetch("security_sha256")] }, "recovery_seconds" => 2.0,
+      "recovery_confirmed" => true, "reset_confirmed" => true
+    )
+  end
 
   def available_resources
     {

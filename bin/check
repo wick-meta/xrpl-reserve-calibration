@@ -42,6 +42,9 @@ ruby -Ilib test/complete_reserves_config_test.rb
 ruby -Ilib test/complete_reserves_workload_test.rb
 ruby -Ilib test/complete_reserves_run_test.rb
 ruby -Ilib test/complete_reserves_artifacts_test.rb
+ruby -Ilib test/complete_reserves_executor_test.rb
+ruby -Ilib test/complete_reserves_cli_test.rb
+ruby -Ilib test/complete_reserves_integration_test.rb
 ruby -Ilib test/complete_reserves_matrix_test.rb
 ruby -Ilib test/complete_reserves_workflow_test.rb
 ruby -rjson -e 'Dir["schemas/*.json"].each { |path| JSON.parse(File.read(path)) }'
