@@ -77,10 +77,10 @@ class CompleteReservesArtifactsTest < Minitest::Test
     )
     output = published.fetch("output_dir")
 
-    assert_equal %w[SHA256SUMS benchmark.json bindings.json schedule.json security.json], Dir.children(output).sort
+    assert_equal %w[SHA256SUMS benchmark.json bindings.json calibration.json schedule.json security.json], Dir.children(output).sort
     assert_equal Digest::SHA256.file(File.join(output, "benchmark.json")).hexdigest,
                  published.dig("artifact_sha256", "benchmark.json")
-    assert_equal 4, File.readlines(File.join(output, "SHA256SUMS")).length
+    assert_equal 5, File.readlines(File.join(output, "SHA256SUMS")).length
     bindings = JSON.parse(File.binread(File.join(output, "bindings.json")))
     assert_equal "complete-reserves-full-matrix-v1", bindings.fetch("profile_id")
     assert_equal security.fetch("security_sha256"), bindings.fetch("security_sha256")
@@ -97,6 +97,7 @@ class CompleteReservesArtifactsTest < Minitest::Test
     assert_equal schedule, verified.fetch("schedule")
     assert_equal security, verified.fetch("security")
     assert_equal bindings, verified.fetch("bindings")
+    assert_equal [], verified.fetch("calibration_items")
 
     changed = Marshal.load(Marshal.dump(schedule))
     changed.fetch("items").first["warmup_seconds"] = 1
@@ -200,7 +201,7 @@ class CompleteReservesArtifactsTest < Minitest::Test
   private
 
   def rewrite_sums(output)
-    names = %w[benchmark.json bindings.json schedule.json security.json]
+    names = %w[benchmark.json bindings.json calibration.json schedule.json security.json]
     File.binwrite(
       File.join(output, "SHA256SUMS"),
       names.map { |name| "#{Digest::SHA256.file(File.join(output, name)).hexdigest}  #{name}\n" }.join

@@ -112,7 +112,7 @@ module XrplReserveStudy
     PROFILE_PATH = CompleteReservesProfile::PATH
     SHA256 = /\A[0-9a-f]{64}\z/
     ITEM_KEYS = %w[
-      schema_version run_id repetition profile_id profile_sha256 schedule_sha256 schedule_item_sha256
+      schema_version run_id repetition workload_class profile_id profile_sha256 schedule_sha256 schedule_item_sha256
       benchmark_sha256 planning_security_sha256 planning_bindings_sha256
       security_config_sha256 distribution_sha256 candidate_sha256 network_scope account_root_target
       owned_object_target base_reserve_drops owner_reserve_drops fee_headroom_drops_per_step
@@ -219,6 +219,7 @@ module XrplReserveStudy
       reject!("invalid complete reserves execution item") unless item.is_a?(Hash) && item.keys.sort == ITEM_KEYS.sort
       reject!("full profile remains disabled") if item["profile_id"] == FULL_PROFILE
       valid = item["schema_version"] == "complete-reserves-calibration-item-v1" &&
+              item["workload_class"] == "complete-reserves-security-suite-v1" &&
               item["profile_id"] == CALIBRATED_PROFILE && item["profile_sha256"] == @profile_sha256 &&
               item["network_scope"] == "isolated-network-only" && item["status"] == "pending" &&
               text?(item["run_id"], /\Acal-a[0-9]{9}-o[0-9]{9}-r[0-9]{2}\z/) &&
@@ -235,15 +236,17 @@ module XrplReserveStudy
     end
 
     def validate_planning_gate!(item, planning)
-      valid = planning.is_a?(Hash) && planning.keys.sort == %w[artifact_sha256 benchmark bindings schedule security] &&
+      valid = planning.is_a?(Hash) && planning.keys.sort == %w[artifact_sha256 benchmark bindings calibration_items schedule security] &&
         planning["benchmark"].is_a?(Hash) && planning["bindings"].is_a?(Hash) &&
-        planning["schedule"].is_a?(Hash) && planning["security"].is_a?(Hash) && planning["artifact_sha256"].is_a?(Hash)
+        planning["calibration_items"].is_a?(Array) && planning["schedule"].is_a?(Hash) &&
+        planning["security"].is_a?(Hash) && planning["artifact_sha256"].is_a?(Hash)
       reject!("verified complete reserves planning bundle is required") unless valid
       benchmark = planning.fetch("benchmark")
       bindings = planning.fetch("bindings")
       schedule = planning.fetch("schedule")
       security = planning.fetch("security")
       artifacts = planning.fetch("artifact_sha256")
+      calibration_items = planning.fetch("calibration_items")
       measured_pairs = benchmark.fetch("measured_samples").select do |sample|
         [10_000, 25_000, 50_000].include?(sample["account_root_target"]) && sample["measurement_source"] == "observed"
       end.map { |sample| [sample.fetch("account_root_target"), sample.fetch("owned_object_target")] }
@@ -268,7 +271,8 @@ module XrplReserveStudy
         bindings.fetch("security_sha256") == item.fetch("planning_security_sha256") &&
         artifacts.fetch("bindings.json") == item.fetch("planning_bindings_sha256") &&
         measured_pairs.length == 3 && measured_pairs.map(&:first).sort == [10_000, 25_000, 50_000] &&
-        measured_pairs.include?([item.fetch("account_root_target"), item.fetch("owned_object_target")])
+        measured_pairs.include?([item.fetch("account_root_target"), item.fetch("owned_object_target")]) &&
+        calibration_items.include?(item)
       reject!("execution item is not bound to the verified planning bundle") unless exact
     rescue KeyError, TypeError
       reject!("verified complete reserves planning bundle is required")

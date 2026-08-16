@@ -14,7 +14,7 @@ class CompleteReservesIntegrationTest < Minitest::Test
   PROFILE_SHA256 = Digest::SHA256.file(PROFILE_PATH).hexdigest
   DISTRIBUTION_SHA256 = "d" * 64
   CANDIDATE_SHA256 = "c" * 64
-  RUN_ID = "cal-a000010000-o000015000-r97"
+  RUN_ID = "cal-a000010000-o000015000-r03"
 
   class FakeIsolatedRuntime
     attr_reader :events, :recipe_kinds
@@ -117,14 +117,17 @@ class CompleteReservesIntegrationTest < Minitest::Test
       XrplReserveStudy::RuntimePublisher::RUNTIME_ROOT, "complete-reserves", "planning", @schedule.fetch("schedule_sha256")
     )
     FileUtils.rm_rf(@planning_output)
-    @published_planning = @artifacts.publish_planning_bundle(
+    @planning_bindings_sha256 = @artifacts.planning_bindings_sha256(
       benchmark: @estimate, schedule: @schedule, security: @planning_security
+    )
+    @item = execution_item
+    @published_planning = @artifacts.publish_planning_bundle(
+      benchmark: @estimate, schedule: @schedule, security: @planning_security, calibration_items: [@item]
     )
     @ledger = {
       "network_id" => "candidate-task6", "ledger_index" => 25, "ledger_hash" => "f" * 64,
       "account_roots" => 10_000, "class_counts" => calibrated_class_counts
     }
-    @item = execution_item
     @runtime = FakeIsolatedRuntime.new(state_path: @state_path, ledger: @ledger, item: @item)
     @verifier = XrplReserveStudy::VerifiedStateSnapshot.new(runtime: @runtime, runtime_root: @runtime_root)
     @snapshot = @verifier.publish(identity: snapshot_identity, seed_result: seed_result)
@@ -178,11 +181,12 @@ class CompleteReservesIntegrationTest < Minitest::Test
   def execution_item
     value = {
       "schema_version" => "complete-reserves-calibration-item-v1", "run_id" => RUN_ID,
-      "repetition" => 97, "profile_id" => "complete-reserves-calibrated-v1",
+      "repetition" => 3, "profile_id" => "complete-reserves-calibrated-v1",
+      "workload_class" => "complete-reserves-security-suite-v1",
       "profile_sha256" => PROFILE_SHA256, "schedule_sha256" => @schedule.fetch("schedule_sha256"),
       "benchmark_sha256" => @estimate.fetch("benchmark_sha256"),
       "planning_security_sha256" => @planning_security.fetch("security_sha256"),
-      "planning_bindings_sha256" => @published_planning.dig("artifact_sha256", "bindings.json"),
+      "planning_bindings_sha256" => @planning_bindings_sha256,
       "security_config_sha256" => XrplReserveStudy::SecurityWorkload.new.security_config_sha256,
       "distribution_sha256" => DISTRIBUTION_SHA256, "candidate_sha256" => CANDIDATE_SHA256,
       "snapshot_id" => "calibration-base", "study_sha256" => "7" * 64,

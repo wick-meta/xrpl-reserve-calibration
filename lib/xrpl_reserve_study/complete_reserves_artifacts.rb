@@ -18,7 +18,15 @@ module XrplReserveStudy
       distribution_sha256 candidate_sha256
     ].freeze
     EXECUTION_FILES = %w[bindings.json metrics.json result.json resume.json security.json].freeze
-    PLANNING_FILES = %w[benchmark.json bindings.json schedule.json security.json].freeze
+    PLANNING_FILES = %w[benchmark.json bindings.json calibration.json schedule.json security.json].freeze
+    CALIBRATION_ITEM_KEYS = %w[
+      schema_version run_id repetition workload_class profile_id profile_sha256 schedule_sha256 schedule_item_sha256
+      benchmark_sha256 planning_security_sha256 planning_bindings_sha256 security_config_sha256
+      distribution_sha256 candidate_sha256 network_scope account_root_target owned_object_target
+      base_reserve_drops owner_reserve_drops fee_headroom_drops_per_step warmup_seconds measurement_seconds
+      execution_limits status counted_run execution_authorized snapshot_id study_sha256 config_sha256
+      source_sha256 ledger_index ledger_hash
+    ].freeze
 
     def initialize
       @publisher = RuntimePublisher.new(error_class: CompleteReservesArtifactsError, failure_label: "complete reserves disposition")
@@ -33,12 +41,15 @@ module XrplReserveStudy
       { "run_id" => result.fetch("run_id"), "output_dir" => output }.freeze
     end
 
-    def publish_planning_bundle(benchmark:, schedule:, security:)
+    def publish_planning_bundle(benchmark:, schedule:, security:, calibration_items: [])
       validate_planning!(benchmark, schedule, security)
       bindings = planning_bindings(benchmark, schedule, security)
+      bindings_sha256 = Digest::SHA256.hexdigest(JSON.pretty_generate(bindings) + "\n")
+      validate_calibration_items!(calibration_items, benchmark, schedule, security, bindings_sha256)
       records = {
         "benchmark.json" => JSON.pretty_generate(benchmark) + "\n",
         "bindings.json" => JSON.pretty_generate(bindings) + "\n",
+        "calibration.json" => JSON.pretty_generate(calibration_items) + "\n",
         "schedule.json" => JSON.pretty_generate(schedule) + "\n",
         "security.json" => JSON.pretty_generate(security) + "\n"
       }
@@ -56,6 +67,13 @@ module XrplReserveStudy
       raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle"
     end
 
+    def planning_bindings_sha256(benchmark:, schedule:, security:)
+      validate_planning!(benchmark, schedule, security)
+      Digest::SHA256.hexdigest(JSON.pretty_generate(planning_bindings(benchmark, schedule, security)) + "\n")
+    rescue KeyError, TypeError, SecurityWorkloadError
+      raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle"
+    end
+
     def verify_planning_bundle(schedule_sha256:)
       unless sha?(schedule_sha256)
         raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle"
@@ -65,14 +83,19 @@ module XrplReserveStudy
       verify_sums!(output, records, "planning")
       benchmark = JSON.parse(records.fetch("benchmark.json"))
       bindings = JSON.parse(records.fetch("bindings.json"))
+      calibration_items = JSON.parse(records.fetch("calibration.json"))
       schedule = JSON.parse(records.fetch("schedule.json"))
       security = JSON.parse(records.fetch("security.json"))
       validate_planning!(benchmark, schedule, security)
+      validate_calibration_items!(
+        calibration_items, benchmark, schedule, security, Digest::SHA256.hexdigest(records.fetch("bindings.json"))
+      )
       valid = schedule.fetch("schedule_sha256") == schedule_sha256 &&
         bindings == planning_bindings(benchmark, schedule, security)
       raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle" unless valid
       {
         "benchmark" => deep_freeze(benchmark), "bindings" => deep_freeze(bindings),
+        "calibration_items" => deep_freeze(calibration_items),
         "schedule" => deep_freeze(schedule), "security" => deep_freeze(security),
         "artifact_sha256" => records.transform_values { |bytes| Digest::SHA256.hexdigest(bytes) }.freeze
       }.freeze
@@ -126,6 +149,50 @@ module XrplReserveStudy
     end
 
     private
+
+    def validate_calibration_items!(items, benchmark, schedule, security, bindings_sha256)
+      unless items.is_a?(Array) && items.map { |item| item["run_id"] }.uniq.length == items.length
+        raise CompleteReservesArtifactsError, "invalid complete reserves calibration plan"
+      end
+      pairs = benchmark.fetch("measured_samples").select do |sample|
+        [10_000, 25_000, 50_000].include?(sample["account_root_target"]) && sample["measurement_source"] == "observed"
+      end.map { |sample| [sample.fetch("account_root_target"), sample.fetch("owned_object_target")] }
+      reserve_pairs = schedule.fetch("items").map do |item|
+        [(Float(item.fetch("base_reserve_xrp")) * 1_000_000).round, (Float(item.fetch("owner_reserve_xrp")) * 1_000_000).round]
+      end.uniq
+      items.each do |item|
+        valid = item.is_a?(Hash) && item.keys.sort == CALIBRATION_ITEM_KEYS.sort &&
+          item["schema_version"] == "complete-reserves-calibration-item-v1" &&
+          item["workload_class"] == "complete-reserves-security-suite-v1" &&
+          item["profile_id"] == "complete-reserves-calibrated-v1" && item["profile_sha256"] == benchmark["profile_sha256"] &&
+          item["schedule_sha256"] == schedule["schedule_sha256"] && item["benchmark_sha256"] == benchmark["benchmark_sha256"] &&
+          item["planning_security_sha256"] == security["security_sha256"] && item["planning_bindings_sha256"] == bindings_sha256 &&
+          item["security_config_sha256"] == security["security_config_sha256"] &&
+          item["distribution_sha256"] == benchmark["distribution_sha256"] && item["candidate_sha256"] == benchmark["candidate_sha256"] &&
+          item["network_scope"] == PLANNING_NETWORK_SCOPE && item["counted_run"] == false && item["execution_authorized"] == false &&
+          item["status"] == "pending" && item["repetition"].is_a?(Integer) && item["repetition"].between?(1, 3) &&
+          item["run_id"] == format("cal-a%09d-o%09d-r%02d", item["account_root_target"], item["owned_object_target"], item["repetition"]) &&
+          pairs.include?([item["account_root_target"], item["owned_object_target"]]) &&
+          reserve_pairs.include?([item["base_reserve_drops"], item["owner_reserve_drops"]]) &&
+          item["fee_headroom_drops_per_step"].is_a?(Integer) && item["fee_headroom_drops_per_step"].positive? &&
+          item["warmup_seconds"] == 300 && item["measurement_seconds"] == 1_800 &&
+          valid_calibration_limits?(item["execution_limits"]) &&
+          %w[snapshot_id].all? { |key| item[key].is_a?(String) && item[key].match?(/\A[a-z0-9-]+\z/) } &&
+          %w[profile_sha256 schedule_sha256 benchmark_sha256 planning_security_sha256 planning_bindings_sha256 security_config_sha256 distribution_sha256 candidate_sha256 study_sha256 config_sha256 source_sha256 ledger_hash].all? { |key| sha?(item[key]) } &&
+          item["ledger_index"].is_a?(Integer) && item["ledger_index"].positive? &&
+          item["schedule_item_sha256"] == Digest::SHA256.hexdigest(JSON.generate(canonical(item.reject { |key, _| key == "schedule_item_sha256" })))
+        raise CompleteReservesArtifactsError, "invalid complete reserves calibration plan" unless valid
+      end
+    rescue ArgumentError, KeyError, TypeError
+      raise CompleteReservesArtifactsError, "invalid complete reserves calibration plan"
+    end
+
+    def valid_calibration_limits?(limits)
+      limits.is_a?(Hash) && limits.keys.sort == %w[deadline_seconds max_batch_size max_retries] &&
+        limits["max_batch_size"].is_a?(Integer) && limits["max_batch_size"].positive? && limits["max_retries"] == 0 &&
+        ((limits["deadline_seconds"].is_a?(Integer) && limits["deadline_seconds"].positive?) ||
+          (limits["deadline_seconds"].is_a?(Float) && limits["deadline_seconds"].finite? && limits["deadline_seconds"].positive?))
+    end
 
     def planning_bindings(benchmark, schedule, security)
       {

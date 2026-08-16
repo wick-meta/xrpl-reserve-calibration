@@ -154,10 +154,13 @@ class CompleteReservesExecutorTest < Minitest::Test
       XrplReserveStudy::RuntimePublisher::RUNTIME_ROOT, "complete-reserves", "planning", @schedule.fetch("schedule_sha256")
     )
     FileUtils.rm_rf(@planning_output)
-    @published_planning = @planning_artifacts.publish_planning_bundle(
+    @planning_bindings_sha256 = @planning_artifacts.planning_bindings_sha256(
       benchmark: @estimate, schedule: @schedule, security: @planning_security
     )
     @item = calibrated_item
+    @published_planning = @planning_artifacts.publish_planning_bundle(
+      benchmark: @estimate, schedule: @schedule, security: @planning_security, calibration_items: [@item]
+    )
     @ledger = {
       "network_id" => "candidate-task6", "ledger_index" => 25, "ledger_hash" => "f" * 64,
       "account_roots" => 10_000, "class_counts" => calibrated_class_counts
@@ -275,23 +278,27 @@ class CompleteReservesExecutorTest < Minitest::Test
   # Break caught: a caller could invent a calibrated item, self-hash it, and
   # reach snapshot selection without any published planning-bundle anchor.
   def test_rejects_arbitrary_self_hashed_calibrated_item_before_snapshot_or_secret
-    forged = Marshal.load(Marshal.dump(@item))
-    forged["run_id"] = "cal-a000011000-o000016500-r01"
-    forged["account_root_target"] = 11_000
-    forged["owned_object_target"] = 16_500
-    forged["schedule_item_sha256"] = canonical_sha256(forged.reject { |key, _| key == "schedule_item_sha256" })
-    selected = read = false
-    guarded = XrplReserveStudy::CompleteReservesExecutor.new(
-      snapshot_provider: ->(_item) { selected = true; @snapshot }, clone_manager: FakeCloneManager.new(@events),
-      runtime: @runtime, artifacts: @artifacts, planning_artifacts: @planning_artifacts,
-      security: @security, recipe_registry: XrplReserveStudy::OwnerObjectRecipeRegistry.new
-    )
+    mutations = [
+      { "run_id" => "cal-a000011000-o000016500-r01", "account_root_target" => 11_000, "owned_object_target" => 16_500 },
+      { "run_id" => "cal-a000010000-o000015000-r02", "repetition" => 2 },
+      { "base_reserve_drops" => 500_000 }
+    ]
+    mutations.each do |changes|
+      forged = Marshal.load(Marshal.dump(@item)).merge(changes)
+      forged["schedule_item_sha256"] = canonical_sha256(forged.reject { |key, _| key == "schedule_item_sha256" })
+      selected = read = false
+      guarded = XrplReserveStudy::CompleteReservesExecutor.new(
+        snapshot_provider: ->(_item) { selected = true; @snapshot }, clone_manager: FakeCloneManager.new(@events),
+        runtime: @runtime, artifacts: @artifacts, planning_artifacts: @planning_artifacts,
+        security: @security, recipe_registry: XrplReserveStudy::OwnerObjectRecipeRegistry.new
+      )
 
-    assert_raises(XrplReserveStudy::CompleteReservesExecutorError) do
-      guarded.run(item: forged, secret_reader: -> { read = true; +"must-not-read" })
+      assert_raises(XrplReserveStudy::CompleteReservesExecutorError) do
+        guarded.run(item: forged, secret_reader: -> { read = true; +"must-not-read" })
+      end
+      refute selected
+      refute read
     end
-    refute selected
-    refute read
   end
 
   # Break caught: a successful injected authorizer could start counted work
@@ -330,11 +337,12 @@ class CompleteReservesExecutorTest < Minitest::Test
     data = {
       "schema_version" => "complete-reserves-calibration-item-v1",
       "run_id" => "cal-a000010000-o000015000-r01", "repetition" => 1,
+      "workload_class" => "complete-reserves-security-suite-v1",
       "profile_id" => "complete-reserves-calibrated-v1", "profile_sha256" => PROFILE_SHA256,
       "schedule_sha256" => @schedule.fetch("schedule_sha256"), "security_config_sha256" => @security&.security_config_sha256 || XrplReserveStudy::SecurityWorkload.new.security_config_sha256,
       "benchmark_sha256" => @estimate.fetch("benchmark_sha256"),
       "planning_security_sha256" => @planning_security.fetch("security_sha256"),
-      "planning_bindings_sha256" => @published_planning.dig("artifact_sha256", "bindings.json"),
+      "planning_bindings_sha256" => @planning_bindings_sha256,
       "distribution_sha256" => DISTRIBUTION_SHA256, "candidate_sha256" => CANDIDATE_SHA256,
       "snapshot_id" => "calibration-base", "study_sha256" => "7" * 64,
       "config_sha256" => "6" * 64, "source_sha256" => "5" * 64,
