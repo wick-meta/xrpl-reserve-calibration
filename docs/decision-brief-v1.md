@@ -1,4 +1,4 @@
-# Account Reserve Calibration Decision Brief v1
+# XRPL Reserve Calibration Decision Brief v1
 
 Status: `insufficient_evidence`
 
@@ -23,12 +23,23 @@ not an estimate of safety or a rejection of any candidate reserve.
   ledger; no Sponsor transaction evidence exists yet.
 - The protected native non-counted pilot passed on the pinned 3.3.0 candidate;
   its evidence is isolated, candidate-specific, and non-counted.
+- The complete-reserves design covers both AccountRoot base reserve and the
+  owner reserve across separate base, owner, and combined checks.
+- Deterministic builders, verified state snapshots and one-use clones,
+  measured-only scheduling, security workloads, and a guarded three-cell
+  calibration executor exist as tested implementation contracts.
+- The full 120-run profile remains disabled, unauthorized, and unavailable to
+  the guarded executor.
 
 ## Required but absent evidence
 
-- A separately reviewed and authorized counted-run mechanism.
-- All 72 counted run dispositions, metrics, thresholds, and uncertainty
-  analysis.
+- A hash-bound complete-reserves distribution from an indexed operator source.
+- Observed 10k, 25k, and 50k provisioning samples and an explicit 1m checkpoint
+  disposition.
+- Live operator-runtime integration and a realistic non-counted calibration.
+- A separately reviewed authorization decision after that calibration.
+- All 120 full-matrix dispositions, metrics, security gates, thresholds, and
+  uncertainty analysis.
 - Second-environment replication.
 - Maintainer review of the completed capacity evidence.
 - Completed economic/ecosystem analysis tied to measured capacity results.
@@ -42,9 +53,9 @@ safety, or Sponsor behavior.
 
 ## Reopening conditions
 
-Reopen the decision only after Sponsor activation is observed on the isolated
-candidate, the supplemental Sponsor scenarios and non-counted pilot complete,
-native execution is established,
-the preregistered counted matrix and replication are complete, and the final
-review accepts the resulting evidence bundle. Any material candidate or study
-change requires a new versioned decision record.
+Reopen the decision only after the exact-ledger distribution, measured
+calibration, explicit 1m disposition, reviewed authorization, full 120-run
+matrix, replication, economic/ecosystem analysis, and final review are
+complete. Sponsor-specific conclusions additionally require the supplemental
+Sponsor scenarios. Any material candidate or study change requires a new
+versioned decision record and results must not be pooled across versions.

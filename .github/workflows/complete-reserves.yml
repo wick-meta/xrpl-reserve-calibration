@@ -1,4 +1,4 @@
-name: Complete reserves guarded matrix
+name: Complete reserves public readiness
 
 on:
   workflow_dispatch:
@@ -7,16 +7,24 @@ permissions:
   contents: read
 
 jobs:
-  authorization-preflight:
+  readiness:
     runs-on: ubuntu-24.04
     environment: complete-reserves
-    timeout-minutes: 5
+    timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Confirm matrix remains disabled before secret access
+      - name: Verify repository and public contracts
+        run: bin/check
+      - name: Verify both secret-free profiles
+        run: |
+          bin/reserve-study complete-reserves-preflight --profile calibrated-v1 > /tmp/calibrated-preflight.json
+          bin/reserve-study complete-reserves-preflight --profile full-v1 > /tmp/full-preflight.json
+          ruby -rjson -e 'r=JSON.parse(File.read(ARGV.fetch(0))); abort unless r["executor_available"] == true && r["execution_authorized"] == false && r["counted_run"] == false' /tmp/calibrated-preflight.json
+          ruby -rjson -e 'r=JSON.parse(File.read(ARGV.fetch(0))); abort unless r["executor_available"] == false && r["execution_authorized"] == false && r["counted_run"] == false && r["timed_floor_seconds"] == 252000' /tmp/full-preflight.json
+      - name: Confirm full matrix remains disabled before secret access
         run: |
           set +e
           bin/reserve-study complete-reserves-matrix

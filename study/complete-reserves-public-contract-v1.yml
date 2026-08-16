@@ -1,0 +1,33 @@
+schema_version: complete-reserves-public-contract-v1
+counted_execution_authorized: false
+execution_network_scope: isolated-network-only
+full_matrix_run_count: 120
+serial_timed_floor_seconds: 252000
+provisioning_time_status: unbounded
+one_million_checkpoint: explicit-disposition-required
+tracked_contracts:
+  study: study/complete-reserves-v1.yml
+  profiles: study/complete-reserves-profiles-v1.yml
+  security_workloads: study/complete-reserves-security-workloads-v1.yml
+  authorization: study/complete-reserves-authorization-v1.yml
+  candidate_inputs: capacity/candidate-inputs.lock.json
+record_schemas:
+  preflight: schemas/complete-reserves-preflight-v1.schema.json
+  study: schemas/complete-reserves-study-v1.schema.json
+  authorization: schemas/complete-reserves-authorization-v1.schema.json
+  owner_object_distribution: schemas/owner-object-distribution-bundle-v1.schema.json
+  verified_snapshot: schemas/verified-state-snapshot-v1.schema.json
+  provisioning_sample: schemas/complete-reserves-provisioning-sample-v1.schema.json
+  provisioning_estimate: schemas/complete-reserves-provisioning-estimate-v1.schema.json
+  profile_schedule: schemas/complete-reserves-profile-schedule-v1.schema.json
+  security_evaluation: schemas/complete-reserves-security-evaluation-v1.schema.json
+  calibration_item: schemas/complete-reserves-calibration-item-v1.schema.json
+  execution_result: schemas/complete-reserves-execution-result-v1.schema.json
+  resume_record: schemas/complete-reserves-resume-v1.schema.json
+operator_documents:
+  runbook: docs/complete-reserves-operator-runbook.md
+  methodology: docs/methodology.md
+  safety: docs/safety.md
+  secrets: docs/secrets-and-credentials.md
+  threat_model: docs/security-threat-model.md
+  contributions: CONTRIBUTING.md

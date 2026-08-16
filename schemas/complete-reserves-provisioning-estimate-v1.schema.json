@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:complete-reserves-provisioning-estimate-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "profile_id", "profile_sha256", "distribution_sha256",
+    "candidate_sha256", "calibration_samples_sha256", "measured_account_root_targets",
+    "one_million_checkpoint", "planning_checkpoints", "timed_floor_seconds",
+    "timed_floor_status", "provisioning_bounded", "provisioning_seconds",
+    "completion_seconds", "estimate_status", "measured_samples", "resource_requirements",
+    "projections", "network_scope", "counted_run", "execution_authorized",
+    "benchmark_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "complete-reserves-provisioning-estimate-v1"},
+    "profile_id": {"const": "complete-reserves-full-matrix-v1"},
+    "profile_sha256": {"$ref": "#/$defs/sha256"},
+    "distribution_sha256": {"$ref": "#/$defs/sha256"},
+    "candidate_sha256": {"$ref": "#/$defs/sha256"},
+    "calibration_samples_sha256": {"$ref": "#/$defs/sha256"},
+    "measured_account_root_targets": {"type": "array", "items": {"type": "integer", "minimum": 1}, "uniqueItems": true},
+    "one_million_checkpoint": {"type": "object"},
+    "planning_checkpoints": {"type": "array", "items": {"type": "object"}},
+    "timed_floor_seconds": {"const": 252000},
+    "timed_floor_status": {"const": "fixed-profile-minimum"},
+    "provisioning_bounded": {"const": false},
+    "provisioning_seconds": {"const": null},
+    "completion_seconds": {"const": null},
+    "estimate_status": {"const": "measured-calibrated-extrapolation"},
+    "measured_samples": {"type": "array", "items": {"$ref": "complete-reserves-provisioning-sample-v1.schema.json"}},
+    "resource_requirements": {"type": "object"},
+    "projections": {"type": "array", "items": {"type": "object"}},
+    "network_scope": {"const": "isolated-network-only"},
+    "counted_run": {"const": false},
+    "execution_authorized": {"const": false},
+    "benchmark_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -37,6 +37,7 @@ ruby -Ilib test/owner_object_distribution_test.rb
 ruby -Ilib test/operator_object_report_test.rb
 ruby -Ilib test/operator_object_distribution_importer_test.rb
 ruby -Ilib test/operator_report_documentation_test.rb
+ruby -Ilib test/public_readiness_test.rb
 ruby -Ilib test/complete_reserves_study_test.rb
 ruby -Ilib test/complete_reserves_config_test.rb
 ruby -Ilib test/complete_reserves_workload_test.rb

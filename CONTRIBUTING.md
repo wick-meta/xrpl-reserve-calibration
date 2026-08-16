@@ -23,7 +23,13 @@ Pull requests should be small enough to review, contain tests for changed behavi
 
 ## Complete-reserves distribution contributions
 
-The current prerequisite is [the current prerequisite issue](https://github.com/wick-meta/xrpl-reserve-calibration/issues/2): a frozen current-state distribution for one validated ledger. One declared operator may create an `operator_local` bundle and use it for a reproducible local study. A matching report from another declared operator upgrades the bundle to `independently_corroborated`; it is encouraged but not required. This is a read-only contribution. It must not submit transactions or disclose database access, credentials, private infrastructure details, wallet material, or personal data.
+The current evidence prerequisite is a frozen current-state distribution for
+one validated ledger. One declared operator may create an `operator_local`
+bundle and use it for a reproducible local study. A matching report from
+another declared operator upgrades the bundle to `independently_corroborated`;
+it is encouraged but not required. This is a read-only contribution. It must
+not submit transactions or disclose database access, credentials, private
+infrastructure details, wallet material, or personal data.
 
 An acceptable imported operator report contains only:
 
@@ -40,6 +46,28 @@ format. Do not put query text, raw result data, hostnames, private URLs,
 database access, credentials, or personal data in that report.
 
 A serial public-RPC `ledger_data` scan is useful for implementation checking, but it has no reliable remaining-page estimate and is not the recommended evidence-acquisition path. A partial scan, an aggregate with no hash/query bindings, or a result at a different ledger hash cannot satisfy this prerequisite. A complete, provenance-bound single-operator report is valid `operator_local` evidence; it must not be described as independently corroborated. See [docs/methodology.md](docs/methodology.md#frozen-distribution-acquisition-paths).
+
+## Complete-reserves implementation contributions
+
+The most useful implementation contributions are operator runtime adapters,
+measured provisioning samples, reproducible state-image fixtures, recovery
+probes, and artifact/schema verification. Follow the
+[operator runbook](docs/complete-reserves-operator-runbook.md) and preserve all
+of these boundaries:
+
+- keep the 120-run full profile disabled and `authorized: false`;
+- make every transaction target a pinned isolated private network;
+- keep signing material out of Git, argv, environment variables, files, logs,
+  exceptions, container metadata, and artifacts;
+- construct ledger state through validated transactions, not database injection;
+- bind samples to the exact distribution, candidate, profile, snapshot, ledger,
+  security configuration, and source hashes; and
+- report missing, failed, partial, and not-measured states explicitly rather
+  than converting them into estimates or successes.
+
+Do not commit generated `capacity/runtime/` or `evidence/generated/` content.
+Proposed public evidence must be sanitized, checksummed, source-commit-bound,
+and reviewed separately from the code that produced it.
 
 ## Security
 

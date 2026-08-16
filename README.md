@@ -30,37 +30,50 @@ remains read-only and never submits to a public network.
 - The bounded private-network pilot has been exercised at its deliberately
   small, non-counted scope. It is an isolated mechanism check, not a reserve
   recommendation or capacity result.
-- The deterministic study inputs, distribution classifier, model, safety
-  checks, schemas, and offline validation are available for review and reuse.
+- The calibrated implementation includes deterministic AccountRoot construction
+  and transaction recipes for all 20 classified owner-object types, protected
+  isolated-network signing, exact finality checks, and sanitized metrics.
+- Actual stopped-state images can be captured as verified snapshots, restarted
+  read-only at the same ledger identity, and copied into run-and-repetition-bound
+  one-use clones. Direct database injection is not an accepted construction path.
+- Secret-free profile, measured-benchmark, and deterministic-schedule commands
+  are available. The guarded executor library covers the three-cell non-counted
+  calibration profile with security workloads, reset/recovery, resume, and
+  checksummed artifact publication at tested fake-runtime boundaries.
 
-### Not yet executable
+### What is not yet executable
 
 - The complete-reserves 120-run matrix is a frozen study design, **not** a
-  turnkey executor. It remains disabled, has no full population/snapshot/clone
-  executor, and has collected no counted capacity evidence.
+  turnkey executor. It remains hard-disabled and unauthorized. The calibrated
+  executor is a library contract, not a bundled live-runtime adapter or operator
+  execution command; the full profile is rejected by that executor.
+- No accepted complete-reserves distribution or observed 10k/25k/50k
+  provisioning bundle has been published. The required 1m checkpoint must be
+  explicitly recorded as measured or not measured with a permitted reason.
 - The matrix's five-minute warmup and thirty-minute measurement window impose
   a **70-hour serial timed minimum** (120 runs × 35 minutes). Population
-  construction, verified snapshots/clones, recovery, and retries are extra;
-  their duration is intentionally not claimed until a calibrated run measures
-  them.
+  construction, snapshots/clones, recovery, and any separately approved rerun
+  are extra. Provisioning remains explicitly unbounded until the calibrated
+  measurements exist; the project does not invent a completion estimate.
 - Neither the existing authorization record nor this documentation authorizes
-  a full-matrix run. A full executor must first prove deterministic population
-  construction, equivalent fresh state for repetitions, bounded resource use,
-  recovery, and artifact integrity in a realistic non-counted calibration.
+  a full-matrix run. The implemented execution model must first be integrated
+  with an operator's isolated runtime and prove population construction,
+  equivalent fresh state, resource use, security gates, recovery, and artifact
+  integrity in a realistic non-counted calibration.
 
 This staging protects the operator and the study's validity, not XRPL Mainnet:
 capacity work is limited to an isolated private network. Until the execution
-model is measured, a large run could exhaust the operator's CPU, memory, disk,
-or I/O; fail to create equivalent starting states; or yield invalid comparisons
-because a partial clone, workload, or recovery changed one run's conditions.
+model is measured on the operator's infrastructure, a large run could exhaust
+CPU, memory, disk, or I/O, or yield invalid comparisons after an incomplete
+population, clone, workload, reset, or recovery.
 No public-network reserve-study transactions are permitted.
 
 ## Current status
 
 | Capability | State |
 |---|---|
-| Versioned study specification | Preregistered final in Phase 1 PR |
-| Exact-ledger, multi-operator Mainnet baseline capture | Verified at ledger 106034050 in Phase 1 PR |
+| Versioned study specification | Frozen and validated |
+| Exact-ledger, multi-operator Mainnet baseline capture | Accepted at ledger 106034050 |
 | Deterministic economic model | Implemented |
 | Controlled capacity harness | Guarded isolated harness; the protected native 3.3.0 non-counted pilot passed and its reviewed artifact is published |
 | Metrics reducer and non-counted-pilot manifest | Validated by the reviewed native non-counted pilot; counted execution remains unauthorized |
@@ -68,7 +81,7 @@ No public-network reserve-study transactions are permitted.
 | Non-counted pilot mechanism | Completed successfully as candidate-specific, non-counted isolated evidence; counted execution remains unauthorized |
 | Multi-run capacity evidence | Not collected |
 | Policy recommendation | `insufficient_evidence`; no change recommended |
-| Complete-reserves program | Disabled implementation contract; no counted data collected |
+| Complete-reserves program | Calibrated library contract and planning CLI implemented; full 120-run execution disabled; no counted data collected |
 
 An implemented tool is not evidence that a reserve change is safe. The current decision brief is [`docs/decision-brief-v1.md`](docs/decision-brief-v1.md); it records `insufficient_evidence`, not a reserve recommendation. The project cannot recommend a change until the preregistered capacity matrix, repeat runs, uncertainty analysis, and documented maintainer review are complete. Optional external review is reported separately and is not a completion dependency.
 
@@ -76,7 +89,10 @@ The functional-smoke artifact and prospective preparation outputs are intentiona
 
 The original `3.1.3` preregistration remains byte-for-byte unchanged. Before any pilot or counted data, the project added a prospective candidate-specific amendment selecting XRPLF `3.3.0` as the sole execution target. Material release deltas are candidate factors, not evidence that `3.1.3` and `3.3.0` are implementation-equivalent; results may not be pooled across or generalized to `3.1.3`. The pinned sources are the official [`3.1.3` release](https://github.com/XRPLF/rippled/releases/tag/3.1.3) at immutable [commit `46b241ace8b30d9c9775d60ffba7d24b21903896`](https://github.com/XRPLF/rippled/commit/46b241ace8b30d9c9775d60ffba7d24b21903896) and the official [`3.3.0` release](https://github.com/XRPLF/rippled/releases/tag/3.3.0) at immutable [commit `00a178fb92ca49521b937ae1a99d863765ea8a90`](https://github.com/XRPLF/rippled/commit/00a178fb92ca49521b937ae1a99d863765ea8a90).
 
-Alignment resolution does not validate live metrics, complete a pilot, establish native execution, authorize counted execution, merge, release, deploy, or produce results.
+Alignment resolution by itself did not validate live metrics, complete a pilot,
+establish native execution, or authorize counted execution. The later reviewed
+pilot remains separate non-counted evidence and still does not authorize the
+complete-reserves calibration or full matrix.
 
 The frozen non-counted pilot contract selects the sole representative run, exactly three keyless destinations, a 300-second warmup, 900 measurement steps at two-second intervals between ledger advancements, and transaction sequences 1, 450, and 900. A scheduled step signs and submits one `Payment` before its one advancement; an unscheduled step advances without a transaction. Controlled recovery succeeds only when validated-ledger tracking resumes. Run manifests bind the validated protocol and both closed pilot artifact schemas to one clean source commit. This contract is candidate-specific and cannot establish native execution or authorize counted work.
 
@@ -111,9 +127,11 @@ bin/check
 bin/reserve-study validate
 bin/reserve-study capacity-plan
 bin/reserve-study model
+bin/reserve-study complete-reserves-preflight --profile calibrated-v1
+bin/reserve-study complete-reserves-preflight --profile full-v1
 ```
 
-The capacity preparation sequence is documented in [capacity/README.md](capacity/README.md). It creates only ignored local inputs and a non-counted-pilot manifest; it does not start a daemon, complete a pilot, authorize counted execution, or establish metric accuracy on the pinned candidate. Metric definitions and record schemas are in [docs/metrics-protocol-v1.md](docs/metrics-protocol-v1.md).
+The earlier base-reserve capacity sequence is documented in [capacity/README.md](capacity/README.md). The complete-reserves planning, runtime-integration, recovery, and provenance sequence is in the [operator runbook](docs/complete-reserves-operator-runbook.md). Metric definitions and the active/legacy schema boundary are in [docs/metrics-protocol-v1.md](docs/metrics-protocol-v1.md) and [schemas/README.md](schemas/README.md).
 
 To capture a fresh read-only public-network baseline:
 
@@ -132,10 +150,8 @@ The complete sequence and its gates are in [docs/roadmap.md](docs/roadmap.md). M
 
 ## Most useful contribution now
 
-The complete-reserves capacity study is intentionally disabled until its
-frozen input distribution exists. The immediate public contribution is
-[the current prerequisite issue](https://github.com/wick-meta/xrpl-reserve-calibration/issues/2):
-an operator with an indexed XRPL dataset can produce a reproducible,
+The full complete-reserves matrix is intentionally disabled. The immediate
+high-value contribution is a reproducible,
 hash-bound aggregate report for the study. A second matching operator report
 is welcome as corroboration, but is not required to use the framework. A
 contribution does **not** require submitting a transaction, operating a public

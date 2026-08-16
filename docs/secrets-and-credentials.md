@@ -42,6 +42,17 @@ destination addresses. They are unsigned intents and have no generated seed,
 private key, public key, or signing capability. A destination does not need a
 private key merely to receive funds.
 
+### Complete-reserves synthetic signers
+
+Owner objects cannot be represented by keyless destination intents alone: they
+must be created and later exercised or deleted through validated transactions.
+The complete-reserves builder therefore derives an ephemeral signer pool for
+the isolated network. A signer is held only in mutable process memory for its
+current operation, passed only through the already verified loopback HTTPS/mTLS
+transport, and wiped immediately after use and again during teardown. It is not
+an operator or public-network credential, but it is still secret material and
+must follow the same no-Git, no-argv, no-environment, no-file, no-log rule.
+
 ## Correct local workflow
 
 1. Clone the public repository and run validation and input-preparation
@@ -63,6 +74,12 @@ private key merely to receive funds.
 6. Destroy disposable networks and remove or rotate temporary credentials
    when the work is complete.
 
+For complete-reserves work, the operator must also keep the runtime adapter,
+state snapshots, one-use clones, provisioning samples, and execution artifacts
+inside ignored `capacity/runtime/`. A signing authority may be read only after
+the exact planning bundle, private identity, snapshot, clone, transaction
+ceilings, and security configuration have passed their gates.
+
 Creating an account inside a standalone or private network is permitted and
 is often the safest way to make temporary test accounts. It does not remove
 the need to protect the account secret, and it does not make validator keys a
@@ -83,11 +100,11 @@ replacement for account-signing authority.
 - Before publishing artifacts, scan for secrets, hostnames, usernames, paths,
   IP addresses, tokens, and other identifying data.
 
-The complete-reserves workflow starts with a false-authorization preflight and
-has no workflow inputs. It does not read a secret while authorization remains
-false. A future reviewed authorization must remain protected in the dedicated
-environment and must not make a credential part of the repository, workflow
-definition, logs, or artifacts.
+The complete-reserves public-readiness workflow has no inputs or secrets. It
+runs repository validation, both secret-free profile preflights, and the
+expected rejection of the disabled matrix. A future reviewed authorization and
+live operator integration must remain separately protected and must not make a
+credential part of the repository, workflow definition, logs, or artifacts.
 
 The repository's ignored runtime paths and safety checks enforce the intended
 boundary, but operators remain responsible for their local secret manager,

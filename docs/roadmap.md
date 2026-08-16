@@ -36,8 +36,7 @@ required for evidence acquisition.
 
 Exit gate: one provenance-bound bundle passes the repository's schema checks
 and is labelled `operator_local`. Exact agreement from another operator is
-recorded as `independently_corroborated`, but is not required to proceed. This
-gate is tracked in [the current prerequisite issue](https://github.com/wick-meta/xrpl-reserve-calibration/issues/2).
+recorded as `independently_corroborated`, but is not required to proceed.
 
 The serial public-RPC `ledger_data` collector is a correctness reference only.
 It has no reliable remaining-page estimate and may fail at ordinary gateway
@@ -45,21 +44,23 @@ limits; a partial scan cannot satisfy this phase.
 
 ## Phase 2 — controlled complete-reserves capacity experiment
 
-1. Implement and test deterministic AccountRoot and owner-object population
-   construction, verified fresh-state snapshots/clones, bounded scheduling,
-   recovery, and sanitized artifact publication.
-2. Measure a realistic, explicitly non-counted calibration profile before
-   estimating full provisioning time or considering authorization. Its results
-   cannot be pooled with the full matrix.
-3. Bind the frozen Phase 1 distribution to the still-disabled authorization
-   record and require review before any signing authority can be read.
-4. Only after the execution model is reviewed and separately authorized, use
-   the commit-pinned isolated-network harness with synthetic execution
-   authority, resource ceilings, timeouts, and explicit abort rules.
-5. Execute the predeclared 120-run matrix: 48 base-reserve cells, 48
-   owner-reserve cells, and 24 combined corner cells, each repeated three
-   times. Its timed warmup-and-measurement floor is 70 serial hours, excluding
-   measured provisioning, snapshot/clone, recovery, and retry time.
+1. Integrate the tested deterministic AccountRoot/owner-object builders,
+   verified state snapshots and one-use clones, measured scheduler, security
+   workloads, and guarded executor with an operator's pinned isolated runtime.
+2. Measure the explicitly non-counted 10k, 25k, and 50k calibration cells and
+   record the 1m checkpoint as measured or not measured with a permitted
+   reason. Calibration results cannot be pooled with the full matrix.
+3. Publish the reverified planning bundle with exact distribution, candidate,
+   profile, benchmark, schedule, security, snapshot, ledger, and artifact
+   bindings. Keep the authorization record false.
+4. Review the live calibration's equivalence, resource ceilings, transaction
+   limits, reset/recovery, resume, and artifact integrity. Consider a separate
+   authorization change only after this gate passes.
+5. If separately authorized, execute the predeclared 120-run matrix: 48
+   base-reserve cells, 48 owner-reserve cells, and 24 combined corner cells,
+   each repeated three times. Its timed warmup-and-measurement floor is 70
+   serial hours, excluding measured provisioning, snapshot/clone, recovery,
+   and retry time.
 6. Preserve successes, failures, exclusions, logs, metrics, environment
    manifests, and checksums. Do not pool results across candidate versions,
    profiles, or environments.
@@ -68,7 +69,8 @@ limits; a partial scan cannot satisfy this phase.
 
 Exit gate: every planned run has a disposition, predeclared thresholds and
 uncertainty are evaluated, and the replication outcome is documented. This
-phase is blocked by Phase 1 and is tracked through this roadmap until an execution issue is opened.
+phase is blocked by the missing Phase 1 distribution and live calibration;
+passing library tests or generating a schedule does not clear either gate.
 
 ## Phase 3 — economic and ecosystem analysis
 
@@ -82,7 +84,7 @@ phase is blocked by Phase 1 and is tracked through this roadmap until an executi
 
 Exit gate: calculations reproduce from committed inputs, material objections
 have dispositions, and the analysis remains traceable to the frozen
-distribution and Phase 2 results. It is tracked through this roadmap until an analysis issue is opened.
+distribution and Phase 2 results.
 
 ## Phase 4 — decision and contribution
 

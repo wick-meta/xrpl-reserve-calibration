@@ -153,9 +153,10 @@ deploy, or produce results. The manifest remains ignored local output and is
 not pilot completion, counted authorization, counted execution, or metric
 evidence.
 
-The reducer, schemas, and manifest boundary have implementation and
-fake-boundary verification only. No metric has been validated against the
-pinned daemon, and no pilot or live metric evidence has been collected.
+The reducer, schemas, and manifest boundary were later exercised by the
+reviewed pinned 3.3.0 non-counted pilot. That candidate-specific bundle is not
+complete-reserves provisioning, calibration, counted-matrix, or policy
+evidence. No live complete-reserves metric bundle has been collected.
 
 The guarded pilot orchestrator revalidates immutable source and runtime
 bindings before authority input and again after its one confirmed reset
