@@ -27,6 +27,38 @@ must report the distribution evidence tier and snapshot construction
 calibration separately from capacity evidence, and must never pool results
 across environments.
 
+### Security and spam-resistance model
+
+Reserves make durable XRPL state economically costly. The base reserve applies
+to each `AccountRoot`; the owner reserve applies to the ledger objects an
+account owns or is responsible for. A candidate policy can therefore change
+both legitimate onboarding cost and the cost of creating large account or
+object populations. Reserve level alone is not proof of security: the study
+must measure how the pinned candidate behaves when those economic constraints
+are exercised at controlled scale.
+
+The security design keeps three policy layers distinct:
+
+1. base-reserve scenarios isolate AccountRoot growth and account-burst abuse;
+2. owner-reserve scenarios isolate trust lines and every other classified
+   owner-object family, including creation, mixed use, churn, and release; and
+3. combined corner scenarios test interactions that separate studies can miss
+   when both account and owner-object growth are stressed together.
+
+Across provisioning and execution artifacts, the study records ledger and
+database growth, CPU and resident memory, disk and I/O, close-time and finality
+percentiles, queue depth, attempted and validated transaction outcomes, fee
+burn, reserve lock/release behavior, and reset/recovery. The fixed security
+suite compares baseline, account-burst, object-burst, mixed, churn, and recovery
+workloads and gates transaction ceilings and success, close time, finality,
+memory, CPU, free disk, I/O wait, queues, reset, and recovery.
+
+All transaction-capable measurements run only on a pinned isolated private
+network with verified identity. Mainnet, Testnet, Devnet, public RPC endpoints,
+and operator-selected transaction endpoints are prohibited. Results inform the
+economic anti-spam and operational state-growth trade-off; they do not, on their
+own, establish overall XRPL security or justify a reserve-policy change.
+
 ### Execution readiness and staged enablement
 
 The 120-run matrix has a fixed serial timed minimum of 70 hours: each run has
