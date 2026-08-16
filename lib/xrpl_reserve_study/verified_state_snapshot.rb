@@ -77,16 +77,25 @@ module XrplReserveStudy
 
     def verify!(snapshot)
       public = validate_snapshot_record!(snapshot)
-      path = public.fetch("path")
-      record_path = File.join(path, "snapshot.json")
-      raise VerifiedStateSnapshotError, "snapshot record is not a regular file" unless File.lstat(record_path).file?
-      stored = JSON.parse(File.binread(record_path))
-      expected = public.reject { |key, _| %w[path directory_binding].include?(key) }
-      raise VerifiedStateSnapshotError, "snapshot record does not match image" unless stored == expected
-      actual = safe_manifest!(File.join(path, "state"))
-      raise VerifiedStateSnapshotError, "snapshot state manifest does not match image" unless actual == public.fetch("files")
+      with_bound_snapshot(public) do |snapshot_handle|
+        after_snapshot_bind!
+        stored = JSON.parse(read_bound_file!(snapshot_handle, "snapshot.json"))
+        expected = public.reject { |key, _| %w[path directory_binding].include?(key) }
+        raise VerifiedStateSnapshotError, "snapshot record does not match image" unless stored == expected
+        state_handle = snapshot_handle.open_child("state", create: false)
+        begin
+          actual = bound_manifest!(state_handle, public.fetch("files"))
+        ensure
+          state_handle.close
+        end
+        resolved = safe_manifest!(File.join(public.fetch("path"), "state"))
+        raise VerifiedStateSnapshotError, "snapshot state manifest does not match image" unless actual == public.fetch("files") && resolved == public.fetch("files")
+        unless directory_binding!(public.fetch("path")) == public.fetch("directory_binding")
+          raise VerifiedStateSnapshotError, "snapshot root or ancestor is not the published directory"
+        end
+      end
       true
-    rescue Errno::ENOENT, JSON::ParserError
+    rescue Errno::ENOENT, Errno::ELOOP, Errno::ENOTDIR, JSON::ParserError
       raise VerifiedStateSnapshotError, "snapshot image is incomplete"
     end
 
@@ -261,19 +270,11 @@ module XrplReserveStudy
 
     def reject_state_name!(name)
       raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless safe_relative?(name)
-      raise VerifiedStateSnapshotError, "runtime state contains prohibited local identity" if name.match?(LOCAL_IDENTITY)
+      raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if name.match?(LOCAL_IDENTITY)
     end
 
     def reject_state_content!(path)
-      bytes = File.binread(path)
-      decoded_text_variants(bytes).each do |encoding, text|
-        next unless printable_text?(text)
-        if encoding == Encoding::UTF_8 && text.match?(LOCAL_IDENTITY)
-          raise VerifiedStateSnapshotError, "runtime state contains prohibited local identity"
-        end
-        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless text.match?(SAFE_OPAQUE_TEXT)
-        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if text.match?(LOCAL_IDENTITY)
-      end
+      reject_state_bytes!(File.binread(path))
     end
 
     def reject_sensitive!(value)
@@ -324,21 +325,62 @@ module XrplReserveStudy
       raise VerifiedStateSnapshotError, "invalid snapshot directory binding" unless valid
     end
 
-    def decoded_text_variants(bytes)
-      variants = []
-      utf8 = bytes.dup.force_encoding(Encoding::UTF_8)
-      variants << [Encoding::UTF_8, utf8] if utf8.valid_encoding?
-      [Encoding::UTF_16LE, Encoding::UTF_16BE].each do |encoding|
-        decoded = bytes.dup.force_encoding(encoding).encode(Encoding::UTF_8)
-        variants << [encoding, decoded] if decoded.valid_encoding?
-      rescue Encoding::InvalidByteSequenceError, Encoding::UndefinedConversionError
-        nil
+    def reject_state_bytes!(bytes)
+      raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless bytes.is_a?(String) && !bytes.empty?
+      [Encoding::UTF_8, Encoding::UTF_16LE, Encoding::UTF_16BE, Encoding::UTF_32LE, Encoding::UTF_32BE].each do |encoding|
+        value = bytes.dup.force_encoding(encoding)
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if value.valid_encoding?
       end
-      variants
     end
 
-    def printable_text?(value)
-      value.each_codepoint.all? { |codepoint| codepoint == 9 || codepoint == 10 || codepoint == 13 || (32..126).cover?(codepoint) }
+    def with_bound_snapshot(snapshot)
+      root = RuntimePublisher::DirectoryHandle.open(@runtime_root)
+      handles = [root]
+      %w[complete-reserves snapshots].each { |name| handles << handles.last.open_child(name, create: false) }
+      handles << handles.last.open_child(snapshot.fetch("snapshot_id"), create: false)
+      actual = handles.reverse.map(&:identity)
+      raise VerifiedStateSnapshotError, "snapshot root or ancestor is not the published directory" unless actual == snapshot.fetch("directory_binding")
+      yield handles.last
+    rescue RuntimePublisher::Native::UnsupportedPlatformError, SystemCallError, ArgumentError
+      raise VerifiedStateSnapshotError, "snapshot root or ancestor is not the published directory"
+    ensure
+      handles&.reverse_each(&:close)
+    end
+
+    def after_snapshot_bind!; end
+
+    def read_bound_file!(directory, name)
+      file = RuntimePublisher::Native.open_read_at(directory.descriptor, name)
+      begin
+        bytes = file.read
+        raise VerifiedStateSnapshotError, "snapshot record is not a regular file" unless bytes.is_a?(String)
+        bytes
+      ensure
+        file.close unless file.closed?
+      end
+    rescue Errno::ELOOP, Errno::ENOENT, Errno::ENOTDIR
+      raise VerifiedStateSnapshotError, "snapshot record is not a regular file"
+    end
+
+    def bound_manifest!(directory, expected)
+      expected.map do |entry|
+        components = entry.fetch("name").split(File::SEPARATOR)
+        parent = directory
+        opened = []
+        components[0...-1].each do |component|
+          child = parent.open_child(component, create: false)
+          opened << child
+          parent = child
+        end
+        bytes = read_bound_file!(parent, components.last)
+        reject_state_name!(entry.fetch("name"))
+        reject_state_bytes!(bytes)
+        { "name" => entry.fetch("name"), "bytes" => bytes.bytesize, "sha256" => Digest::SHA256.hexdigest(bytes) }
+      ensure
+        opened&.reverse_each(&:close)
+      end.sort_by { |entry| entry.fetch("name") }
+    rescue Errno::ELOOP, Errno::ENOTDIR
+      raise VerifiedStateSnapshotError, "runtime state contains symlink or device"
     end
   end
 end

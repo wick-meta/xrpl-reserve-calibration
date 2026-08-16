@@ -6,6 +6,8 @@ require "tmpdir"
 require_relative "../lib/xrpl_reserve_study"
 
 class VerifiedStateSnapshotTest < Minitest::Test
+  STATE_BYTES = "\xFF\xFF\xFF".b
+
   class CheckoutRuntime
     attr_reader :events
 
@@ -38,7 +40,7 @@ class VerifiedStateSnapshotTest < Minitest::Test
     @runtime_root = Dir.mktmpdir("verified-state-runtime-")
     @state = File.join(@runtime_root, "checkout-state")
     FileUtils.mkdir_p(@state)
-    File.binwrite(File.join(@state, "ledger.db"), "ledger-state")
+    File.binwrite(File.join(@state, "ledger.db"), STATE_BYTES)
     @ledger = {
       "network_id" => "candidate-private", "ledger_index" => 9,
       "ledger_hash" => "a" * 64, "account_roots" => 2,
@@ -66,7 +68,7 @@ class VerifiedStateSnapshotTest < Minitest::Test
   # Break caught: a copied state file can change after publication without changing its JSON binding record.
   def test_snapshot_rejects_tampered_real_state
     snapshot = @publisher.publish(identity: identity, seed_result: seed_result)
-    File.binwrite(File.join(snapshot.fetch("path"), "state", "tampered"), "x")
+    File.binwrite(File.join(snapshot.fetch("path"), "state", "tampered"), "\xFF".b)
 
     error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) { @publisher.verify!(snapshot) }
     assert_equal "snapshot state manifest does not match image", error.message
@@ -80,7 +82,7 @@ class VerifiedStateSnapshotTest < Minitest::Test
       @publisher.publish(identity: identity, seed_result: seed_result)
     end
 
-    assert_equal "runtime state contains prohibited local identity", error.message
+    assert_equal "runtime state violates strict artifact policy", error.message
     refute Dir.exist?(File.join(@runtime_root, "complete-reserves", "snapshots", identity.fetch("snapshot_id")))
     assert_equal %i[stop start_readonly], @runtime.events
   end
@@ -152,6 +154,39 @@ class VerifiedStateSnapshotTest < Minitest::Test
 
     error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) { @publisher.verify!(snapshot) }
     assert_equal "snapshot record is not a regular file", error.message
+  end
+
+  # Break caught: a root swap after path validation but before state reads made verify! accept a replacement image.
+  def test_rejects_snapshot_root_swap_after_descriptor_binding
+    snapshot = @publisher.publish(identity: identity, seed_result: seed_result)
+    replacement = File.join(@runtime_root, "post-bind-replacement")
+    @publisher.define_singleton_method(:after_snapshot_bind!) do
+      File.rename(snapshot.fetch("path"), replacement)
+      FileUtils.ln_s(replacement, snapshot.fetch("path"))
+    end
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) { @publisher.verify!(snapshot) }
+    assert_equal "snapshot root or ancestor is not the published directory", error.message
+  end
+
+  # Break caught: UTF-32 identities were ignored because only UTF-8 and UTF-16 were inspected.
+  def test_rejects_machine_identity_in_utf32
+    File.binwrite(File.join(@state, "ledger.db"), "machine_id=operator-7".encode("UTF-32LE"))
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: lowercase hex encoded local identity was accepted as opaque runtime bytes.
+  def test_rejects_lowercase_hex_encoded_machine_identity
+    File.binwrite(File.join(@state, "ledger.db"), "machine_id=operator-7".unpack1("H*"))
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
   end
 
   private
