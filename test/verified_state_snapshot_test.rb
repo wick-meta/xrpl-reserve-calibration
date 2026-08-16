@@ -294,6 +294,40 @@ class VerifiedStateSnapshotTest < Minitest::Test
     assert_equal "runtime state violates strict artifact policy", error.message
   end
 
+  # Break caught: a unit separator between a sensitive field and value bypassed the NUL-only scrubber.
+  def test_rejects_unit_separator_identity_inside_valid_nudb_record
+    add_nudb_record("machine_id\x1foperator-7".b)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: every ASCII control separator, including DEL, is an equivalent identity-field delimiter.
+  def test_rejects_all_ascii_control_separated_identities_in_valid_nudb_records
+    ((0..31).to_a + [127]).each do |separator|
+      write_minimal_nudb_state(@state)
+      add_nudb_record("host#{separator.chr}node-7".b)
+
+      assert_raises(XrplReserveStudy::VerifiedStateSnapshotError, "separator 0x#{separator.to_s(16)}") do
+        @publisher.publish(identity: identity, seed_result: seed_result)
+      end
+    end
+  end
+
+  # Break caught: control-separated identity fields must be rejected in every supported wide encoding.
+  def test_rejects_encoded_control_separated_identities_in_valid_nudb_records
+    %w[UTF-16LE UTF-16BE UTF-32LE UTF-32BE].each do |encoding|
+      write_minimal_nudb_state(@state)
+      add_nudb_record("endpoint\x1fnode-7".encode(encoding).b)
+
+      assert_raises(XrplReserveStudy::VerifiedStateSnapshotError, encoding) do
+        @publisher.publish(identity: identity, seed_result: seed_result)
+      end
+    end
+  end
+
   # Break caught: peer discovery endpoints are local cache data, not ledger state, and must not enter clones.
   def test_validates_then_scrubs_peerfinder_sqlite_cache
     File.binwrite(File.join(@state, "peerfinder.sqlite"), minimal_sqlite_database)
