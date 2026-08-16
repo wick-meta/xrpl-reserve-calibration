@@ -71,4 +71,29 @@ class PublicReadinessTest < Minitest::Test
     assert_includes workflow, "complete-reserves-matrix"
     refute_match(/secrets\.|XRPL_STANDALONE_GENESIS|pull_request_target|contents:\s*write/, workflow)
   end
+
+  def test_public_guides_require_the_staged_operator_sequence
+    readme = File.binread(File.join(ROOT, "README.md"))
+    contributing = File.binread(File.join(ROOT, "CONTRIBUTING.md"))
+
+    [readme, contributing].each do |document|
+      normalized = document.gsub(/\s+/, " ")
+      assert_includes normalized, "exact-ledger distribution"
+      assert_includes normalized, "10k, 25k, and 50k"
+      assert_includes normalized, "account-burst"
+      assert_includes normalized, "object-burst"
+      assert_includes normalized, "mixed"
+      assert_includes normalized, "churn"
+      assert_includes normalized, "recovery"
+      assert_includes normalized, "1m"
+      assert_includes normalized, "`measured`"
+      assert_includes normalized, "`not_measured`"
+      assert_includes normalized, "operator runtime adapter"
+      assert_includes normalized, "120-run"
+      assert_includes normalized, "hard-disabled"
+      assert_includes normalized, "authorized: false"
+      assert_match(/no counted complete-reserves evidence has been collected/i, normalized)
+      assert_match(/no reserve-policy change is recommended/i, normalized)
+    end
+  end
 end

@@ -81,6 +81,45 @@ CPU, memory, disk, or I/O, or yield invalid comparisons after an incomplete
 population, clone, workload, reset, or recovery.
 No public-network reserve-study transactions are permitted.
 
+## Required staged operator sequence
+
+Complete-reserves work must proceed through these gates in order. Passing one
+gate does not imply that a later gate passed, authorize counted execution, or
+turn a planning artifact into reserve-policy evidence.
+
+1. **Capture the exact-ledger distribution.** Produce a hash-bound AccountRoot
+   total and owner-object totals by class from one exact validated ledger. An
+   operator may use its own indexed Clio, `rippled`, database, or HTTPS source.
+   The capture is read-only; no reserve-study transaction may be submitted to
+   Mainnet, Testnet, Devnet, or a public endpoint.
+2. **Run the small non-counted calibration profile.** On an operator-supplied
+   isolated XRPL runtime adapter, run the 10k, 25k, and 50k AccountRoot
+   checkpoints with owner objects scaled from the accepted distribution. Each
+   checkpoint exercises the frozen security suite: account-burst for
+   AccountRoot/base pressure, object-burst for owner-reserve pressure, mixed
+   for combined pressure, plus baseline, churn, recovery, reset, and artifact
+   checks. These runs calibrate the execution model; they are not counted
+   capacity evidence.
+3. **Record the 1m disposition.** Bind an observed 1m sample as `measured`, or
+   record `not_measured` with one permitted reason. Silence, inference, and an
+   estimated replacement do not satisfy this gate.
+4. **Review operational evidence.** Before scaling, review measured
+   provisioning, CPU, memory, disk, I/O, close-time/finality and transaction
+   results; verified snapshots and one-use clones; security gates; reset and
+   recovery; and checksummed artifact publication. Stop if any binding,
+   resource, fresh-state, recovery, or integrity requirement fails.
+5. **Only then consider the full profile.** The frozen 120-run matrix requires
+   a separate future authorization decision. It remains rejected by the
+   executor, hard-disabled, and `authorized: false`; completing the earlier
+   gates does not enable it. No counted complete-reserves evidence has been
+   collected and no reserve-policy change is recommended.
+
+The repository supplies the guarded contracts and planning tools, but a live
+operator runtime adapter is still required for transaction-capable calibration
+on isolated infrastructure. The full profile is deliberately unavailable for
+execution until the smaller profile proves the operator's construction,
+measurement, reset/recovery, and publication path.
+
 ## Current status
 
 | Capability | State |
