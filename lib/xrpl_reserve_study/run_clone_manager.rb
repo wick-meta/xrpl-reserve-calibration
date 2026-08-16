@@ -18,6 +18,7 @@ module XrplReserveStudy
 
     def prepare(snapshot:, run:)
       @verifier.verify!(snapshot)
+      clone_ancestry = ensure_clone_root!
       bindings = bindings!(snapshot, run)
       destination = File.join(clone_root, clone_name(snapshot, run))
       raise RunCloneManagerError, "clone destination already exists" if File.exist?(destination) || File.symlink?(destination)
@@ -29,11 +30,13 @@ module XrplReserveStudy
       files = manifest!(File.join(temporary, "state"))
       record = {
         "schema_version" => "complete-reserves-run-clone-v1", "snapshot_id" => snapshot.fetch("snapshot_id"),
-        "run_id" => run.fetch("run_id"), "repetition" => run.fetch("repetition"), "bindings" => bindings, "files" => files
+        "run_id" => run.fetch("run_id"), "repetition" => run.fetch("repetition"), "bindings" => bindings,
+        "snapshot_sha256" => snapshot_digest(snapshot), "files" => files
       }
       File.binwrite(File.join(temporary, "clone.json"), JSON.generate(record) + "\n")
-      File.rename(temporary, destination)
-      record.merge("path" => destination).freeze
+      raise RunCloneManagerError, "clone root changed during preparation" unless clone_ancestry == ensure_clone_root!
+      publish_clone_directory!(temporary, destination)
+      record.merge("path" => destination, "snapshot" => snapshot).freeze
     rescue RunCloneManagerError
       raise
     rescue StandardError => error
@@ -44,10 +47,14 @@ module XrplReserveStudy
 
     def start(clone:, run:)
       record = verify_clone!(clone)
+      @verifier.verify!(clone.fetch("snapshot"))
+      raise RunCloneManagerError, "clone does not match verified snapshot" unless
+        record.fetch("snapshot_sha256") == snapshot_digest(clone.fetch("snapshot"))
       expected = run_bindings!(run)
       raise RunCloneManagerError, "run does not match clone bindings" unless record.fetch("bindings") == expected &&
         record.fetch("run_id") == run.fetch("run_id") && record.fetch("repetition") == run.fetch("repetition")
       raise RunCloneManagerError, "checkout clone runtime adapter is invalid" unless @runtime.respond_to?(:start_clone!)
+      consume_clone!(clone.fetch("path"))
       @runtime.start_clone!(path: clone.fetch("path"), run: run)
     rescue RunCloneManagerError
       raise
@@ -74,10 +81,17 @@ module XrplReserveStudy
     end
 
     def verify_clone!(clone)
-      valid = clone.is_a?(Hash) && clone["path"].is_a?(String) && clone["path"].start_with?("#{clone_root}#{File::SEPARATOR}")
+      valid = clone.is_a?(Hash) && clone["path"].is_a?(String) && clone["snapshot"].is_a?(Hash)
       raise RunCloneManagerError, "invalid run clone" unless valid
+      reject_unsafe_clone_path!(clone.fetch("path"))
       stored = JSON.parse(File.binread(File.join(clone.fetch("path"), "clone.json")))
-      expected = clone.reject { |key, _| key == "path" }
+      valid_record = stored.is_a?(Hash) && stored.keys.sort == %w[bindings files repetition run_id schema_version snapshot_id snapshot_sha256] &&
+        stored["schema_version"] == "complete-reserves-run-clone-v1" && stored["snapshot_id"].is_a?(String) &&
+        stored["run_id"].is_a?(String) && stored["repetition"].is_a?(Integer) && sha?(stored["snapshot_sha256"])
+      raise RunCloneManagerError, "invalid run clone" unless valid_record
+      expected_path = File.join(clone_root, clone_name(stored, stored))
+      raise RunCloneManagerError, "invalid run clone" unless clone.fetch("path") == expected_path
+      expected = clone.reject { |key, _| %w[path snapshot].include?(key) }
       raise RunCloneManagerError, "clone record does not match image" unless stored == expected
       raise RunCloneManagerError, "clone state manifest does not match image" unless manifest!(File.join(clone.fetch("path"), "state")) == clone.fetch("files")
       stored
@@ -97,13 +111,14 @@ module XrplReserveStudy
     end
 
     def manifest!(root)
-      raise RunCloneManagerError, "clone state is incomplete" unless File.directory?(root) && !File.symlink?(root)
+      root_stat = File.lstat(root)
+      raise RunCloneManagerError, "clone state is incomplete" unless root_stat.directory?
       files = Dir.glob(File.join(root, "**", "*"), File::FNM_DOTMATCH).map do |path|
-        next if [".", ".."].include?(File.basename(path)) || File.directory?(path)
         stat = File.lstat(path)
+        next if [".", ".."].include?(File.basename(path)) || stat.directory?
         raise RunCloneManagerError, "clone state contains symlink or device" unless stat.file?
         relative = path.delete_prefix("#{root}#{File::SEPARATOR}")
-        raise RunCloneManagerError, "clone state contains unsafe path" unless relative.match?(/\A[^\/\0]+(?:\/[^\/\0]+)*\z/)
+        raise RunCloneManagerError, "clone state contains unsafe path" unless safe_relative?(relative)
         { "name" => relative, "bytes" => stat.size, "sha256" => Digest::SHA256.file(path).hexdigest }
       end.compact
       raise RunCloneManagerError, "clone state is incomplete" if files.empty?
@@ -114,8 +129,79 @@ module XrplReserveStudy
       File.join(@runtime_root, "complete-reserves", "clones")
     end
 
+    def ensure_clone_root!
+      FileUtils.mkdir_p(clone_root, mode: 0o700)
+      paths = []
+      current = File.expand_path(clone_root)
+      loop do
+        stat = File.lstat(current)
+        raise RunCloneManagerError, "clone root must not contain symlinks" if stat.symlink?
+        paths << [current, stat.dev, stat.ino]
+        break if current == @runtime_root
+        parent = File.dirname(current)
+        raise RunCloneManagerError, "clone root must not contain symlinks" if parent == current
+        current = parent
+      end
+      paths.freeze
+    rescue Errno::ENOENT
+      raise RunCloneManagerError, "clone root must not contain symlinks"
+    end
+
     def clone_name(snapshot, run)
       "#{snapshot.fetch("snapshot_id")}-#{run.fetch("run_id")}-n#{run.fetch("repetition")}"
+    end
+
+    def publish_clone_directory!(temporary, destination)
+      parent = File.dirname(destination)
+      raise RunCloneManagerError, "clone root must not contain symlinks" unless ensure_clone_root!
+      parent_handle = RuntimePublisher::DirectoryHandle.open(parent)
+      staging = parent_handle.open_child(File.basename(temporary), create: false)
+      staging.close
+      parent_handle.rename_noreplace(File.basename(temporary), File.basename(destination))
+    rescue Errno::EEXIST, Errno::ENOTEMPTY
+      raise RunCloneManagerError, "clone destination already exists"
+    rescue RuntimePublisher::Native::UnsupportedPlatformError, SystemCallError => error
+      raise RunCloneManagerError, "could not publish run clone: #{error.message}"
+    ensure
+      parent_handle&.close
+    end
+
+    def snapshot_digest(snapshot)
+      record = snapshot.reject { |key, _| key == "path" }.sort.to_h
+      Digest::SHA256.hexdigest(JSON.generate(record))
+    rescue StandardError
+      raise RunCloneManagerError, "invalid verified snapshot"
+    end
+
+    def consume_clone!(path)
+      lock = File.join(path, ".consumed")
+      File.open(lock, File::WRONLY | File::CREAT | File::EXCL | File::NOFOLLOW, 0o600) { |file| file.write("consumed\n") }
+    rescue Errno::EEXIST, Errno::ELOOP
+      raise RunCloneManagerError, "clone has already been consumed"
+    rescue SystemCallError => error
+      raise RunCloneManagerError, "could not consume run clone: #{error.message}"
+    end
+
+    def reject_unsafe_clone_path!(path)
+      expected_root = File.expand_path(clone_root)
+      raise RunCloneManagerError, "invalid run clone" unless path == File.expand_path(path) &&
+        path.start_with?("#{expected_root}#{File::SEPARATOR}") && !path.split(File::SEPARATOR).include?("..")
+      current = expected_root
+      raise RunCloneManagerError, "invalid run clone" if File.symlink?(current)
+      relative = path.delete_prefix("#{expected_root}#{File::SEPARATOR}")
+      relative.split(File::SEPARATOR).each do |component|
+        raise RunCloneManagerError, "invalid run clone" unless component.match?(/\A[a-z0-9-]+\z/)
+        current = File.join(current, component)
+        raise RunCloneManagerError, "invalid run clone" if File.symlink?(current)
+      end
+    end
+
+    def safe_relative?(value)
+      value.is_a?(String) && value.match?(/\A[^\/\0]+(?:\/[^\/\0]+)*\z/) && !value.split(File::SEPARATOR).include?("..")
+    end
+
+    def sha?(value)
+      value.is_a?(String) && value.match?(/\A[a-f0-9]{64}\z/)
     end
   end
 end

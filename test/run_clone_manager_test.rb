@@ -76,6 +76,64 @@ class RunCloneManagerTest < Minitest::Test
     assert_equal "run does not match clone bindings", error.message
   end
 
+  # Break caught: two starts of the same clone would execute a non-isolated repetition twice.
+  def test_start_consumes_the_clone_before_runtime_start
+    clone = @manager.prepare(snapshot: @snapshot, run: run_record)
+    @manager.start(clone: clone, run: run_record)
+
+    error = assert_raises(XrplReserveStudy::RunCloneManagerError) { @manager.start(clone: clone, run: run_record) }
+    assert_equal "clone has already been consumed", error.message
+    assert_equal 1, @runtime.started.length
+  end
+
+  # Break caught: prefix-only containment accepts a forged path with a traversal segment.
+  def test_rejects_a_forged_clone_path_with_a_traversal_segment
+    clone = @manager.prepare(snapshot: @snapshot, run: run_record)
+    forged = clone.merge("path" => File.join(@runtime_root, "complete-reserves", "clones", "..", "clones", File.basename(clone.fetch("path"))))
+
+    error = assert_raises(XrplReserveStudy::RunCloneManagerError) { @manager.start(clone: forged, run: run_record) }
+    assert_equal "invalid run clone", error.message
+    assert_empty @runtime.started
+  end
+
+  # Break caught: a symlinked child directory was followed while calculating a clone manifest.
+  def test_rejects_a_symlinked_child_directory_in_snapshot_state
+    outside = Dir.mktmpdir("run-clone-outside-")
+    FileUtils.ln_s(outside, File.join(@source, "state", "linked"))
+
+    error = assert_raises(XrplReserveStudy::RunCloneManagerError) do
+      @manager.prepare(snapshot: @snapshot, run: run_record)
+    end
+    assert_equal "clone state contains symlink or device", error.message
+  ensure
+    FileUtils.rm_rf(outside) if outside
+  end
+
+  # Break caught: a caller could substitute a differently verified snapshot after clone preparation.
+  def test_rebinds_the_verified_snapshot_before_start
+    clone = @manager.prepare(snapshot: @snapshot, run: run_record)
+    forged = clone.merge("snapshot" => @snapshot.merge("config_sha256" => "0" * 64))
+
+    error = assert_raises(XrplReserveStudy::RunCloneManagerError) { @manager.start(clone: forged, run: run_record) }
+    assert_equal "clone does not match verified snapshot", error.message
+    assert_empty @runtime.started
+  end
+
+  # Break caught: a clone-root symlink could redirect supposedly ignored state outside the checkout runtime.
+  def test_rejects_a_symlinked_clone_root
+    outside = Dir.mktmpdir("run-clone-root-outside-")
+    root = File.join(@runtime_root, "complete-reserves")
+    FileUtils.mkdir_p(root)
+    FileUtils.ln_s(outside, File.join(root, "clones"))
+
+    error = assert_raises(XrplReserveStudy::RunCloneManagerError) do
+      @manager.prepare(snapshot: @snapshot, run: run_record)
+    end
+    assert_equal "clone root must not contain symlinks", error.message
+  ensure
+    FileUtils.rm_rf(outside) if outside
+  end
+
   private
 
   def run_record

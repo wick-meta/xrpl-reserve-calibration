@@ -18,7 +18,7 @@ module XrplReserveStudy
     LEDGER_KEYS = %w[network_id ledger_index ledger_hash account_roots class_counts].freeze
     SHA_KEYS = %w[candidate_image_digest study_sha256 distribution_sha256 config_sha256 source_sha256 ledger_hash].freeze
     FORBIDDEN_KEY = /secret|seed|private.?key|master.?key|endpoint|host|user|path|url/i
-    FORBIDDEN_TEXT = /(?:\A[rs][1-9A-HJ-NP-Za-km-z]{20,}\z|https?:\/\/|(?:secret|seed|private.?key|master.?key|endpoint|host|user|path)\s*[=:])/i
+    FORBIDDEN_TEXT = /(?:\A[rs][1-9A-HJ-NP-Za-km-z]{20,}\z|https?:\/\/|\b(?:mainnet|testnet|localhost)\b|(?:secret|seed|private.?key|master.?key|endpoint|host|user|path)\s*[=:])/i
 
     def initialize(runtime:, runtime_root: RuntimePublisher::RUNTIME_ROOT)
       @runtime = runtime
@@ -26,6 +26,7 @@ module XrplReserveStudy
     end
 
     def publish(identity:, seed_result:)
+      stopped = restarted = published = success = false
       prepared_identity = validate_identity!(identity)
       expected_ledger = ledger_from_seed!(seed_result)
       source = checkout_state_path!
@@ -35,6 +36,7 @@ module XrplReserveStudy
 
       require_runtime!(:stop_checkout!)
       @runtime.stop_checkout!
+      stopped = true
       source_manifest = safe_manifest!(source)
       temporary = "#{destination}.tmp-#{SecureRandom.hex(12)}"
       copy_image!(source, temporary, source_manifest)
@@ -45,17 +47,28 @@ module XrplReserveStudy
       write_record!(temporary, record)
       ensure_ancestors_unchanged!(source, source_ancestry)
       publish_directory!(temporary, destination)
+      published = true
       require_runtime!(:start_readonly!)
       @runtime.start_readonly!
+      restarted = true
       actual_ledger = validate_ledger!(@runtime.ledger_identity)
       raise VerifiedStateSnapshotError, "restart ledger identity does not match seed state" unless actual_ledger == expected_ledger
 
+      success = true
       public_record(record, destination)
     rescue VerifiedStateSnapshotError
       raise
     rescue SystemCallError, IOError, JSON::ParserError => error
       raise VerifiedStateSnapshotError, "could not capture verified state snapshot: #{error.message}"
     ensure
+      if stopped && !restarted
+        begin
+          @runtime.start_readonly!
+        rescue StandardError
+          # The capture failure remains primary; callers can observe the adapter's restart failure separately.
+        end
+      end
+      remove_published_image!(destination) if published && !success
       FileUtils.rm_rf(temporary) if defined?(temporary) && temporary && File.exist?(temporary)
     end
 
@@ -111,7 +124,8 @@ module XrplReserveStudy
     end
 
     def safe_manifest!(root)
-      raise VerifiedStateSnapshotError, "runtime state is incomplete" unless File.directory?(root) && !File.symlink?(root)
+      root_stat = File.lstat(root)
+      raise VerifiedStateSnapshotError, "runtime state is incomplete" unless root_stat.directory?
       entries = []
       Find.find(root) do |path|
         next if path == root
@@ -153,9 +167,23 @@ module XrplReserveStudy
       parent = File.dirname(destination)
       FileUtils.mkdir_p(parent, mode: 0o700)
       raise VerifiedStateSnapshotError, "snapshot ancestor is a symlink" if symlinked_ancestor?(parent)
-      File.rename(temporary, destination)
-    rescue Errno::EEXIST
+      parent_handle = RuntimePublisher::DirectoryHandle.open(parent)
+      staging = parent_handle.open_child(File.basename(temporary), create: false)
+      staging.close
+      parent_handle.rename_noreplace(File.basename(temporary), File.basename(destination))
+    rescue Errno::EEXIST, Errno::ENOTEMPTY
       raise VerifiedStateSnapshotError, "snapshot destination already exists"
+    ensure
+      parent_handle&.close
+    end
+
+    def remove_published_image!(destination)
+      return unless destination && destination == File.join(snapshot_root, File.basename(destination)) &&
+                    File.directory?(destination) && !File.symlink?(destination)
+
+      FileUtils.remove_entry_secure(destination, true)
+    rescue StandardError => error
+      raise VerifiedStateSnapshotError, "could not remove failed state snapshot: #{error.message}"
     end
 
     def validate_snapshot_record!(snapshot)

@@ -9,6 +9,8 @@ class VerifiedStateSnapshotTest < Minitest::Test
   class CheckoutRuntime
     attr_reader :events
 
+    attr_writer :ledger
+
     def initialize(state_path:, ledger:)
       @state_path = state_path
       @ledger = ledger
@@ -80,6 +82,35 @@ class VerifiedStateSnapshotTest < Minitest::Test
 
     assert_equal "runtime state contains prohibited local identity", error.message
     refute Dir.exist?(File.join(@runtime_root, "complete-reserves", "snapshots", identity.fetch("snapshot_id")))
+    assert_equal %i[stop start_readonly], @runtime.events
+  end
+
+  # Break caught: a post-publish ledger mismatch used to leave a cloneable image behind.
+  def test_restart_mismatch_restores_runtime_and_removes_the_published_image
+    @runtime.ledger = @ledger.merge("ledger_index" => 10)
+    snapshot_id = identity.fetch("snapshot_id")
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity.merge("snapshot_id" => snapshot_id), seed_result: seed_result)
+    end
+
+    assert_equal "restart ledger identity does not match seed state", error.message
+    assert_equal %i[stop start_readonly], @runtime.events
+    refute File.exist?(File.join(@runtime_root, "complete-reserves", "snapshots", snapshot_id))
+  end
+
+  # Break caught: checking File.directory? before lstat follows a child-directory symlink.
+  def test_rejects_a_symlinked_child_directory
+    outside = Dir.mktmpdir("verified-state-outside-")
+    FileUtils.ln_s(outside, File.join(@state, "linked"))
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+
+    assert_equal "runtime state contains symlink or device", error.message
+  ensure
+    FileUtils.rm_rf(outside) if outside
   end
 
   private
