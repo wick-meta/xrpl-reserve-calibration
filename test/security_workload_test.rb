@@ -12,10 +12,24 @@ class SecurityWorkloadTest < Minitest::Test
     contract = workload.contract
 
     assert_equal %w[baseline account-burst object-burst mixed churn recovery], contract.fetch("workloads").map { |entry| entry.fetch("workload_id") }
-    assert_equal %w[transaction_success close_time_ceiling memory_ceiling cpu_ceiling disk_ceiling io_wait_ceiling queue_ceiling finality_ceiling recovery_ceiling reset_recovery artifact_integrity], contract.fetch("gates").keys
+    assert_equal %w[transaction_success transaction_ceiling close_time_ceiling memory_ceiling cpu_ceiling disk_ceiling io_wait_ceiling queue_ceiling finality_ceiling recovery_ceiling reset_recovery artifact_integrity], contract.fetch("gates").keys
     assert_equal "isolated-network-only", contract.fetch("network_scope")
     assert_equal false, contract.fetch("counted_run")
+    assert_equal false, contract.fetch("execution_authorized")
+    assert_match(/\A[0-9a-f]{64}\z/, workload.security_config_sha256)
     assert contract.frozen?
+  end
+
+  # Break caught: a burst exceeding its declared transaction ceiling passing
+  # because only its success ratio was evaluated.
+  def test_names_declared_per_workload_transaction_ceiling_failure
+    result = workload.evaluate(
+      baseline: baseline,
+      observed: observed.merge("attempted_transactions" => 501, "validated_transactions" => 501)
+    )
+
+    assert_includes result.fetch("failed_gates"), "transaction_ceiling"
+    assert_equal 500, result.fetch("transaction_ceiling")
   end
 
   # Break caught: an overloaded run passing despite exceeding the frozen
@@ -75,6 +89,8 @@ class SecurityWorkloadTest < Minitest::Test
     assert_equal "e" * 64, result.fetch("profile_sha256")
     assert_equal "d" * 64, result.fetch("distribution_sha256")
     assert_equal "c" * 64, result.fetch("candidate_sha256")
+    assert_equal workload.security_config_sha256, result.fetch("security_config_sha256")
+    assert_equal false, result.fetch("execution_authorized")
     assert result.frozen?
   end
 
@@ -87,6 +103,8 @@ class SecurityWorkloadTest < Minitest::Test
   def baseline
     observed.merge(
       "workload_id" => "baseline",
+      "attempted_transactions" => 100,
+      "validated_transactions" => 100,
       "ledger_close_seconds_p95" => 2.0,
       "peak_memory_bytes" => 400,
       "cpu_utilization_ratio" => 0.25,
@@ -103,6 +121,8 @@ class SecurityWorkloadTest < Minitest::Test
       "profile_sha256" => "e" * 64,
       "distribution_sha256" => "d" * 64,
       "candidate_sha256" => "c" * 64,
+      "attempted_transactions" => 500,
+      "validated_transactions" => 500,
       "transaction_success_ratio" => 1.0,
       "ledger_close_seconds_p95" => 4.0,
       "peak_memory_bytes" => 800,

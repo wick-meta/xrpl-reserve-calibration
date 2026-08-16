@@ -97,6 +97,20 @@ class ProfileSchedulerTest < Minitest::Test
     assert_nil result.fetch("completion_seconds")
   end
 
+
+  # Break caught: accepting a self-hashed benchmark/schedule after its required
+  # explicit 1m disposition was removed.
+  def test_rejects_benchmark_without_explicit_one_million_disposition
+    forged = Marshal.load(Marshal.dump(estimate))
+    forged.delete("one_million_checkpoint")
+    forged["planning_checkpoints"].pop
+    forged["benchmark_sha256"] = Digest::SHA256.hexdigest(JSON.generate(canonical(forged.reject { |key, _| key == "benchmark_sha256" })))
+
+    assert_raises(XrplReserveStudy::ProfileSchedulerError) do
+      scheduler.schedule(profile: full_profile, benchmark: forged, available_resources: available_resources)
+    end
+  end
+
   # Break caught: later caller mutation changing the scheduler's bound
   # distribution or hashes after construction.
   def test_constructor_copies_identity_bindings
@@ -138,7 +152,7 @@ class ProfileSchedulerTest < Minitest::Test
   end
 
   def estimate
-    benchmark.estimate_full(profile: full_profile, samples: measured_samples)
+    benchmark_estimate
   end
 
   def available_resources

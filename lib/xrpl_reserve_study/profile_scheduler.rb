@@ -2,6 +2,7 @@
 
 require "digest"
 require "json"
+require_relative "security_workload"
 
 module XrplReserveStudy
   class ProfileSchedulerError < StudyError; end
@@ -11,15 +12,17 @@ module XrplReserveStudy
     RESOURCE_KEYS = %w[logical_cpus memory_bytes free_disk_bytes io_read_bytes_per_second io_write_bytes_per_second].freeze
     RESUME_KEYS = %w[run_id schedule_item_sha256 result_artifact_sha256 reset_confirmed recovery_confirmed].freeze
 
-    def initialize(distribution:, distribution_sha256:, candidate_sha256:, profile_path: CompleteReservesProfile::PATH)
+    def initialize(distribution:, distribution_sha256:, candidate_sha256:, profile_path: CompleteReservesProfile::PATH,
+                   security_path: SecurityWorkload::PATH)
       @distribution = Marshal.load(Marshal.dump(distribution)).freeze
       @distribution_sha256 = distribution_sha256.dup.freeze
       @candidate_sha256 = candidate_sha256.dup.freeze
       @profile_path = profile_path
       @profile_sha256 = Digest::SHA256.file(profile_path).hexdigest
+      @security_config_sha256 = SecurityWorkload.new(path: security_path).security_config_sha256
       @expected_profile = CompleteReservesProfile.new(profile_path).full_matrix_cells(distribution: distribution)
       reject! unless valid_sha?(@distribution_sha256) && valid_sha?(@candidate_sha256)
-    rescue SystemCallError, CompleteReservesProfileError
+    rescue SystemCallError, CompleteReservesProfileError, SecurityWorkloadError
       reject!
     end
 
@@ -37,11 +40,13 @@ module XrplReserveStudy
         "profile_sha256" => @profile_sha256,
         "distribution_sha256" => @distribution_sha256,
         "candidate_sha256" => @candidate_sha256,
+        "security_config_sha256" => @security_config_sha256,
         "benchmark_sha256" => benchmark.fetch("benchmark_sha256"),
         "timed_floor_seconds" => ProvisioningBenchmark::TIMED_FLOOR_SECONDS,
         "provisioning_time_status" => "unbounded",
         "completion_seconds" => nil,
         "planning_checkpoints" => benchmark.fetch("planning_checkpoints"),
+        "one_million_checkpoint" => benchmark.fetch("one_million_checkpoint"),
         "resource_requirements" => benchmark.fetch("resource_requirements"),
         "pending_count" => items.count { |item| item.fetch("status") == "pending" },
         "resumed_count" => items.count { |item| item.fetch("status") == "resumed-complete" },
@@ -68,6 +73,10 @@ module XrplReserveStudy
       reject! unless benchmark.fetch("timed_floor_seconds") == ProvisioningBenchmark::TIMED_FLOOR_SECONDS
       reject! unless benchmark.fetch("provisioning_bounded") == false && benchmark.fetch("provisioning_seconds").nil? && benchmark.fetch("completion_seconds").nil?
       reject! unless benchmark.fetch("counted_run") == false && benchmark.fetch("execution_authorized") == false
+      checkpoint = benchmark.fetch("one_million_checkpoint")
+      reject! unless benchmark.fetch("planning_checkpoints").is_a?(Array) && benchmark.fetch("planning_checkpoints").last == checkpoint
+      reject! unless checkpoint.is_a?(Hash) && checkpoint.fetch("account_root_target") == 1_000_000 &&
+        %w[measured not_measured].include?(checkpoint.fetch("measurement_status"))
       expected = canonical_sha256(benchmark.reject { |key, _| key == "benchmark_sha256" })
       reject! unless benchmark.fetch("benchmark_sha256") == expected
       regenerated = ProvisioningBenchmark.new(
@@ -75,7 +84,11 @@ module XrplReserveStudy
         distribution_sha256: @distribution_sha256,
         candidate_sha256: @candidate_sha256,
         profile_path: @profile_path
-      ).estimate_full(profile: @expected_profile, samples: benchmark.fetch("measured_samples"))
+      ).estimate_full(
+        profile: @expected_profile,
+        samples: benchmark.fetch("measured_samples"),
+        one_million_checkpoint: checkpoint
+      )
       reject! unless benchmark == regenerated
     rescue ProvisioningBenchmarkError
       reject!
@@ -120,6 +133,7 @@ module XrplReserveStudy
         "profile_sha256" => @profile_sha256,
         "distribution_sha256" => @distribution_sha256,
         "candidate_sha256" => @candidate_sha256,
+        "security_config_sha256" => @security_config_sha256,
         "benchmark_sha256" => benchmark.fetch("benchmark_sha256"),
         "execution_mode" => "exclusive",
         "destructive_resource" => "isolated-ledger-state",

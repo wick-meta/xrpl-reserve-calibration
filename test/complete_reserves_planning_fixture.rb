@@ -66,4 +66,31 @@ module CompleteReservesPlanningFixture
       }
     end
   end
+
+  def measured_one_million_checkpoint
+    sample = measured_samples.find { |entry| entry.fetch("account_root_target") == 1_000_000 }
+    {
+      "account_root_target" => 1_000_000,
+      "owned_object_target" => 1_500_000,
+      "measurement_status" => "measured",
+      "artifact_sha256" => sample.fetch("artifact_sha256")
+    }
+  end
+
+  def unmeasured_one_million_checkpoint
+    {
+      "account_root_target" => 1_000_000,
+      "owned_object_target" => 1_500_000,
+      "measurement_status" => "not_measured",
+      "reason" => "not-yet-executed"
+    }
+  end
+
+  def benchmark_estimate(samples: measured_samples, one_million_checkpoint: measured_one_million_checkpoint)
+    benchmark.estimate_full(
+      profile: full_profile,
+      samples: samples,
+      one_million_checkpoint: one_million_checkpoint
+    )
+  end
 end

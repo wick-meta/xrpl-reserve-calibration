@@ -19,7 +19,7 @@ class CompleteReservesArtifactsTest < Minitest::Test
   # Break caught: publishing scheduler/security evidence without verifying its
   # benchmark hash chain or producing checksums for every planning artifact.
   def test_publishes_hash_bound_non_counted_planning_bundle_atomically
-    estimate = benchmark.estimate_full(profile: full_profile, samples: measured_samples)
+    estimate = benchmark_estimate
     schedule = XrplReserveStudy::ProfileScheduler.new(
       distribution: DISTRIBUTION,
       distribution_sha256: DISTRIBUTION_SHA256,
@@ -35,17 +35,24 @@ class CompleteReservesArtifactsTest < Minitest::Test
     )
     output = published.fetch("output_dir")
 
-    assert_equal %w[SHA256SUMS benchmark.json schedule.json security.json], Dir.children(output).sort
+    assert_equal %w[SHA256SUMS benchmark.json bindings.json schedule.json security.json], Dir.children(output).sort
     assert_equal Digest::SHA256.file(File.join(output, "benchmark.json")).hexdigest,
                  published.dig("artifact_sha256", "benchmark.json")
-    assert_equal 3, File.readlines(File.join(output, "SHA256SUMS")).length
+    assert_equal 4, File.readlines(File.join(output, "SHA256SUMS")).length
+    bindings = JSON.parse(File.binread(File.join(output, "bindings.json")))
+    assert_equal "complete-reserves-full-matrix-v1", bindings.fetch("profile_id")
+    assert_equal security.fetch("security_sha256"), bindings.fetch("security_sha256")
+    assert_equal false, bindings.fetch("execution_authorized")
+    assert_equal schedule.fetch("security_config_sha256"), security.fetch("security_config_sha256")
+    assert_equal "complete-reserves-full-matrix-v1", security.fetch("profile_id")
+    assert_equal false, security.fetch("execution_authorized")
   ensure
     FileUtils.rm_rf(output) if output&.start_with?(XrplReserveStudy::RuntimePublisher::RUNTIME_ROOT + File::SEPARATOR)
   end
 
   # Break caught: accepting a schedule detached from the measured benchmark.
   def test_rejects_changed_planning_hash_chain_before_publication
-    estimate = benchmark.estimate_full(profile: full_profile, samples: measured_samples)
+    estimate = benchmark_estimate
     schedule = XrplReserveStudy::ProfileScheduler.new(
       distribution: DISTRIBUTION,
       distribution_sha256: DISTRIBUTION_SHA256,
@@ -62,6 +69,50 @@ class CompleteReservesArtifactsTest < Minitest::Test
     end
   end
 
+
+  # Break caught: joining a valid calibrated-profile security result to a full
+  # matrix benchmark merely because their config/distribution hashes match.
+  def test_rejects_calibrated_security_result_for_full_matrix_planning_bundle
+    estimate = benchmark_estimate
+    schedule = planning_schedule(estimate)
+    calibrated_baseline = security_baseline.merge("profile_id" => "complete-reserves-calibrated-v1")
+    calibrated_observed = security_observed.merge("profile_id" => "complete-reserves-calibrated-v1")
+    security = XrplReserveStudy::SecurityWorkload.new.evaluate(
+      baseline: calibrated_baseline,
+      observed: calibrated_observed
+    )
+
+    assert_raises(XrplReserveStudy::CompleteReservesArtifactsError) do
+      XrplReserveStudy::CompleteReservesArtifacts.new.publish_planning_bundle(
+        benchmark: estimate,
+        schedule: schedule,
+        security: security
+      )
+    end
+  end
+
+  # Break caught: publishing security evidence that is self-hashed but bound
+  # to a different security configuration or authorizes execution.
+  def test_rejects_rehashed_changed_security_binding_or_authorization
+    estimate = benchmark_estimate
+    schedule = planning_schedule(estimate)
+    valid = XrplReserveStudy::SecurityWorkload.new.evaluate(baseline: security_baseline, observed: security_observed)
+    [
+      valid.merge("security_config_sha256" => "f" * 64),
+      valid.merge("execution_authorized" => true)
+    ].each do |mutation|
+      changed = Marshal.load(Marshal.dump(mutation))
+      changed["security_sha256"] = Digest::SHA256.hexdigest(JSON.generate(canonical(changed.reject { |key, _| key == "security_sha256" })))
+      assert_raises(XrplReserveStudy::CompleteReservesArtifactsError) do
+        XrplReserveStudy::CompleteReservesArtifacts.new.publish_planning_bundle(
+          benchmark: estimate,
+          schedule: schedule,
+          security: changed
+        )
+      end
+    end
+  end
+
   private
 
   def available_resources
@@ -74,9 +125,20 @@ class CompleteReservesArtifactsTest < Minitest::Test
     }
   end
 
+  def planning_schedule(estimate)
+    XrplReserveStudy::ProfileScheduler.new(
+      distribution: DISTRIBUTION,
+      distribution_sha256: DISTRIBUTION_SHA256,
+      candidate_sha256: CANDIDATE_SHA256,
+      profile_path: PROFILE_PATH
+    ).schedule(profile: full_profile, benchmark: estimate, available_resources: available_resources)
+  end
+
   def security_baseline
     security_observed.merge(
       "workload_id" => "baseline",
+      "attempted_transactions" => 100,
+      "validated_transactions" => 100,
       "ledger_close_seconds_p95" => 2.0,
       "peak_memory_bytes" => 400,
       "cpu_utilization_ratio" => 0.25,
@@ -89,10 +151,12 @@ class CompleteReservesArtifactsTest < Minitest::Test
   def security_observed
     {
       "workload_id" => "mixed",
-      "profile_id" => "complete-reserves-calibrated-v1",
+      "profile_id" => "complete-reserves-full-matrix-v1",
       "profile_sha256" => Digest::SHA256.file(PROFILE_PATH).hexdigest,
       "distribution_sha256" => DISTRIBUTION_SHA256,
       "candidate_sha256" => CANDIDATE_SHA256,
+      "attempted_transactions" => 500,
+      "validated_transactions" => 500,
       "transaction_success_ratio" => 1.0,
       "ledger_close_seconds_p95" => 4.0,
       "peak_memory_bytes" => 800,
@@ -108,5 +172,14 @@ class CompleteReservesArtifactsTest < Minitest::Test
       "reset_confirmed" => true,
       "artifact_sha256" => "a" * 64
     }
+  end
+
+
+  def canonical(value)
+    case value
+    when Hash then value.keys.sort.to_h { |key| [key, canonical(value.fetch(key))] }
+    when Array then value.map { |entry| canonical(entry) }
+    else value
+    end
   end
 end

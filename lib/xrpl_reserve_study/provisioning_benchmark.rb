@@ -10,6 +10,9 @@ module XrplReserveStudy
   class ProvisioningBenchmark
     REQUIRED_TARGETS = [10_000, 25_000, 50_000].freeze
     OPTIONAL_TARGETS = [1_000_000].freeze
+    ONE_MILLION_NOT_MEASURED_REASONS = %w[
+      not-yet-executed operator-resource-limit calibration-failed
+    ].freeze
     TIMED_FLOOR_SECONDS = 252_000
     SHA256 = /\A[0-9a-f]{64}\z/
     SAMPLE_KEYS = (%w[
@@ -29,9 +32,10 @@ module XrplReserveStudy
       reject!
     end
 
-    def estimate_full(profile:, samples:)
+    def estimate_full(profile:, samples:, one_million_checkpoint: nil)
       reject! unless profile == @expected_full
       ordered_samples = validate_samples!(samples)
+      one_million = validate_one_million_checkpoint!(one_million_checkpoint, ordered_samples)
       rates = ordered_samples.map { |sample| provisioning_seconds(sample).fdiv(population_work(sample)) }
       projections = profile.map do |cell|
         work = cell.fetch("account_root_target") + cell.fetch("owned_object_target")
@@ -50,16 +54,16 @@ module XrplReserveStudy
           }
         )
       end
-      checkpoints = (REQUIRED_TARGETS + OPTIONAL_TARGETS).map do |target|
+      checkpoints = REQUIRED_TARGETS.map do |target|
         sample = ordered_samples.find { |entry| entry.fetch("account_root_target") == target }
-        checkpoint = {
+        {
           "account_root_target" => target,
           "owned_object_target" => (@distribution.fetch("owned_objects") * target.fdiv(@distribution.fetch("account_roots"))).ceil,
-          "measurement_status" => sample ? "measured" : "not-measured"
+          "measurement_status" => "measured",
+          "artifact_sha256" => sample.fetch("artifact_sha256")
         }
-        checkpoint["artifact_sha256"] = sample.fetch("artifact_sha256") if sample
-        checkpoint
       end
+      checkpoints << one_million
       result = {
         "schema_version" => "complete-reserves-provisioning-estimate-v1",
         "profile_id" => "complete-reserves-full-matrix-v1",
@@ -68,6 +72,7 @@ module XrplReserveStudy
         "candidate_sha256" => @candidate_sha256,
         "calibration_samples_sha256" => canonical_sha256(ordered_samples),
         "measured_account_root_targets" => ordered_samples.map { |sample| sample.fetch("account_root_target") },
+        "one_million_checkpoint" => one_million,
         "planning_checkpoints" => checkpoints,
         "timed_floor_seconds" => TIMED_FLOOR_SECONDS,
         "timed_floor_status" => "fixed-profile-minimum",
@@ -139,6 +144,28 @@ module XrplReserveStudy
       reject! unless sample.fetch("reset_confirmed") == true && sample.fetch("recovery_confirmed") == true
       sha256!(sample.fetch("snapshot_sha256"))
       sha256!(sample.fetch("artifact_sha256"))
+    end
+
+    def validate_one_million_checkpoint!(checkpoint, samples)
+      reject! unless checkpoint.is_a?(Hash) && checkpoint.keys.all? { |key| key.is_a?(String) }
+      reject! unless checkpoint.fetch("account_root_target") == 1_000_000
+      expected_objects = (@distribution.fetch("owned_objects") * 1_000_000.fdiv(@distribution.fetch("account_roots"))).ceil
+      reject! unless checkpoint.fetch("owned_object_target") == expected_objects
+      measured = samples.find { |sample| sample.fetch("account_root_target") == 1_000_000 }
+      case checkpoint.fetch("measurement_status")
+      when "measured"
+        reject! unless checkpoint.keys.sort == %w[account_root_target artifact_sha256 measurement_status owned_object_target].sort
+        reject! unless measured && checkpoint.fetch("artifact_sha256") == measured.fetch("artifact_sha256")
+      when "not_measured"
+        reject! unless checkpoint.keys.sort == %w[account_root_target measurement_status owned_object_target reason].sort
+        reject! if measured
+        reject! unless ONE_MILLION_NOT_MEASURED_REASONS.include?(checkpoint.fetch("reason"))
+      else
+        reject!
+      end
+      deep_freeze(deep_copy(checkpoint))
+    rescue KeyError, TypeError
+      reject!
     end
 
     def resource_requirements(samples)

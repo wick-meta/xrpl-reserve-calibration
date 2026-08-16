@@ -25,8 +25,22 @@ module XrplReserveStudy
 
     def publish_planning_bundle(benchmark:, schedule:, security:)
       validate_planning!(benchmark, schedule, security)
+      bindings = {
+        "schema_version" => "complete-reserves-planning-bindings-v1",
+        "profile_id" => benchmark.fetch("profile_id"),
+        "profile_sha256" => benchmark.fetch("profile_sha256"),
+        "distribution_sha256" => benchmark.fetch("distribution_sha256"),
+        "candidate_sha256" => benchmark.fetch("candidate_sha256"),
+        "security_config_sha256" => security.fetch("security_config_sha256"),
+        "benchmark_sha256" => benchmark.fetch("benchmark_sha256"),
+        "schedule_sha256" => schedule.fetch("schedule_sha256"),
+        "security_sha256" => security.fetch("security_sha256"),
+        "counted_run" => false,
+        "execution_authorized" => false
+      }
       records = {
         "benchmark.json" => JSON.pretty_generate(benchmark) + "\n",
+        "bindings.json" => JSON.pretty_generate(bindings) + "\n",
         "schedule.json" => JSON.pretty_generate(schedule) + "\n",
         "security.json" => JSON.pretty_generate(security) + "\n"
       }
@@ -36,10 +50,11 @@ module XrplReserveStudy
       @publisher.publish(output) { |staging| records.each { |name, bytes| staging.write(name, bytes) } }
       {
         "schedule_sha256" => schedule.fetch("schedule_sha256"),
+        "security_sha256" => security.fetch("security_sha256"),
         "output_dir" => output,
         "artifact_sha256" => sums.freeze
       }.freeze
-    rescue KeyError, TypeError
+    rescue KeyError, TypeError, SecurityWorkloadError
       raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle"
     end
 
@@ -57,10 +72,13 @@ module XrplReserveStudy
         schedule["schema_version"] == "complete-reserves-profile-schedule-v1" &&
         security["schema_version"] == "complete-reserves-security-evaluation-v1" &&
         [benchmark, schedule, security].all? { |record| record["counted_run"] == false } &&
-        [benchmark, schedule].all? { |record| record["execution_authorized"] == false } &&
+        [benchmark, schedule, security].all? { |record| record["execution_authorized"] == false } &&
         schedule["benchmark_sha256"] == benchmark["benchmark_sha256"] &&
+        [schedule, security].all? { |record| record["profile_id"] == benchmark["profile_id"] } &&
         schedule["profile_sha256"] == benchmark["profile_sha256"] &&
         security["profile_sha256"] == benchmark["profile_sha256"] &&
+        schedule["security_config_sha256"] == security["security_config_sha256"] &&
+        security["security_config_sha256"] == SecurityWorkload.new.security_config_sha256 &&
         [schedule, security].all? { |record| record["distribution_sha256"] == benchmark["distribution_sha256"] } &&
         [schedule, security].all? { |record| record["candidate_sha256"] == benchmark["candidate_sha256"] } &&
         valid_record_hash?(benchmark, "benchmark_sha256") && valid_record_hash?(schedule, "schedule_sha256") &&

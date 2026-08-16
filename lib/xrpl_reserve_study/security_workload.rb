@@ -20,6 +20,7 @@ module XrplReserveStudy
     ].freeze
     GATES = {
       "transaction_success" => { "minimum" => 0.99 },
+      "transaction_ceiling" => { "declared_per_workload" => true },
       "close_time_ceiling" => { "maximum" => 5.0, "baseline_multiplier_maximum" => 2.0 },
       "memory_ceiling" => { "maximum_resource_ratio" => 0.9, "baseline_multiplier_maximum" => 2.0 },
       "cpu_ceiling" => { "maximum" => 0.9, "baseline_multiplier_maximum" => 4.0 },
@@ -35,21 +36,25 @@ module XrplReserveStudy
       "schema_version" => "complete-reserves-security-workloads-v1",
       "network_scope" => "isolated-network-only",
       "counted_run" => false,
+      "execution_authorized" => false,
       "workloads" => WORKLOADS,
       "gates" => GATES
     }.freeze
     METRIC_KEYS = %w[
       workload_id profile_id profile_sha256 distribution_sha256 candidate_sha256
-      transaction_success_ratio ledger_close_seconds_p95 peak_memory_bytes memory_limit_bytes
+      attempted_transactions validated_transactions transaction_success_ratio
+      ledger_close_seconds_p95 peak_memory_bytes memory_limit_bytes
       cpu_utilization_ratio free_disk_bytes disk_total_bytes io_wait_ratio max_queue_depth finality_seconds_p95
       recovery_seconds recovery_confirmed reset_confirmed artifact_sha256
     ].freeze
 
-    attr_reader :contract
+    attr_reader :contract, :security_config_sha256
 
     def initialize(path: PATH, source: nil)
-      data = YAML.safe_load(source || File.binread(path), permitted_classes: [], aliases: false)
+      bytes = source || File.binread(path)
+      data = YAML.safe_load(bytes, permitted_classes: [], aliases: false)
       reject! unless data == EXPECTED
+      @security_config_sha256 = Digest::SHA256.hexdigest(bytes).freeze
       @contract = deep_freeze(deep_copy(data))
     rescue Psych::Exception, SystemCallError
       reject!
@@ -64,9 +69,12 @@ module XrplReserveStudy
       %w[profile_id profile_sha256 distribution_sha256 candidate_sha256].each do |key|
         reject! unless observed.fetch(key) == baseline.fetch(key)
       end
+      workload = WORKLOADS.find { |entry| entry.fetch("workload_id") == observed.fetch("workload_id") }
+      reject! unless workload
 
       gate_results = {
         "transaction_success" => observed.fetch("transaction_success_ratio") >= GATES.dig("transaction_success", "minimum"),
+        "transaction_ceiling" => observed.fetch("attempted_transactions") <= workload.fetch("transaction_ceiling"),
         "close_time_ceiling" => below_absolute_and_baseline?(observed, baseline, "ledger_close_seconds_p95", "close_time_ceiling"),
         "memory_ceiling" => observed.fetch("peak_memory_bytes").fdiv(observed.fetch("memory_limit_bytes")) <= GATES.dig("memory_ceiling", "maximum_resource_ratio") &&
           below_baseline?(observed, baseline, "peak_memory_bytes", "memory_ceiling"),
@@ -86,6 +94,10 @@ module XrplReserveStudy
         "profile_sha256" => observed.fetch("profile_sha256"),
         "distribution_sha256" => observed.fetch("distribution_sha256"),
         "candidate_sha256" => observed.fetch("candidate_sha256"),
+        "security_config_sha256" => @security_config_sha256,
+        "attempted_transactions" => observed.fetch("attempted_transactions"),
+        "validated_transactions" => observed.fetch("validated_transactions"),
+        "transaction_ceiling" => workload.fetch("transaction_ceiling"),
         "baseline_artifact_sha256" => baseline.fetch("artifact_sha256"),
         "observed_artifact_sha256" => observed.fetch("artifact_sha256"),
         "gate_results" => gate_results,
@@ -93,7 +105,8 @@ module XrplReserveStudy
         "failed_gates" => gate_results.reject { |_name, passed| passed }.keys,
         "passed" => gate_results.values.all?,
         "network_scope" => "isolated-network-only",
-        "counted_run" => false
+        "counted_run" => false,
+        "execution_authorized" => false
       }
       result["security_sha256"] = canonical_sha256(result)
       deep_freeze(result)
@@ -108,6 +121,7 @@ module XrplReserveStudy
       workload_id = metrics.fetch("workload_id")
       reject! unless WORKLOADS.any? { |entry| entry.fetch("workload_id") == workload_id }
       reject! unless workload_id == expected_workload if expected_workload
+      declaration = WORKLOADS.find { |entry| entry.fetch("workload_id") == workload_id }
       reject! unless %w[complete-reserves-calibrated-v1 complete-reserves-full-matrix-v1].include?(metrics.fetch("profile_id"))
       %w[profile_sha256 distribution_sha256 candidate_sha256].each do |key|
         reject! unless metrics.fetch(key).is_a?(String) && metrics.fetch(key).match?(SHA256)
@@ -116,10 +130,16 @@ module XrplReserveStudy
         reject! unless finite_nonnegative_numeric?(metrics.fetch(key))
       end
       %w[peak_memory_bytes free_disk_bytes max_queue_depth].each { |key| reject! unless nonnegative_integer?(metrics.fetch(key)) }
+      reject! unless positive_integer?(metrics.fetch("attempted_transactions"))
+      reject! unless nonnegative_integer?(metrics.fetch("validated_transactions")) &&
+        metrics.fetch("validated_transactions") <= metrics.fetch("attempted_transactions")
       %w[memory_limit_bytes disk_total_bytes].each { |key| reject! unless positive_integer?(metrics.fetch(key)) }
       reject! unless metrics.fetch("peak_memory_bytes") <= metrics.fetch("memory_limit_bytes")
       reject! unless metrics.fetch("free_disk_bytes") <= metrics.fetch("disk_total_bytes")
       reject! unless metrics.fetch("transaction_success_ratio") <= 1.0 && metrics.fetch("cpu_utilization_ratio") <= 1.0 && metrics.fetch("io_wait_ratio") <= 1.0
+      expected_ratio = metrics.fetch("validated_transactions").fdiv(metrics.fetch("attempted_transactions"))
+      reject! unless (metrics.fetch("transaction_success_ratio") - expected_ratio).abs <= 1e-12
+      reject! if expected_workload && metrics.fetch("attempted_transactions") > declaration.fetch("transaction_ceiling")
       reject! unless [true, false].include?(metrics.fetch("recovery_confirmed")) && [true, false].include?(metrics.fetch("reset_confirmed"))
       reject! unless metrics.fetch("artifact_sha256").is_a?(String)
       reject! if require_artifact_hash && !metrics.fetch("artifact_sha256").match?(SHA256)

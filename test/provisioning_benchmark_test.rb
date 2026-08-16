@@ -11,7 +11,7 @@ class ProvisioningBenchmarkTest < Minitest::Test
   # Break caught: folding the fixed 70-hour run windows into a made-up total
   # duration when full-scale provisioning has not been measured.
   def test_estimate_keeps_timed_floor_separate_from_unbounded_provisioning
-    result = benchmark.estimate_full(profile: full_profile, samples: measured_samples)
+    result = benchmark_estimate
 
     assert_equal 252_000, result.fetch("timed_floor_seconds")
     assert_equal "fixed-profile-minimum", result.fetch("timed_floor_status")
@@ -35,29 +35,65 @@ class ProvisioningBenchmarkTest < Minitest::Test
     error = assert_raises(XrplReserveStudy::ProvisioningBenchmarkError) do
       benchmark.estimate_full(
         profile: full_profile,
-        samples: measured_samples.reject { |sample| sample.fetch("account_root_target") == 25_000 }
+        samples: measured_samples.reject { |sample| sample.fetch("account_root_target") == 25_000 },
+        one_million_checkpoint: measured_one_million_checkpoint
       )
     end
 
     assert_equal "invalid provisioning benchmark", error.message
   end
 
-  # Break caught: treating the one-million checkpoint as measured when an
-  # operator supplied only the three mandatory calibration samples.
-  def test_reports_unmeasured_one_million_checkpoint_without_inventing_data
-    result = benchmark.estimate_full(profile: full_profile, samples: measured_samples.first(3))
+  # Break caught: synthesizing a one-million disposition when the operator did
+  # not explicitly provide measured evidence or a not-measured reason.
+  def test_requires_explicit_one_million_disposition
+    assert_raises(XrplReserveStudy::ProvisioningBenchmarkError) do
+      benchmark.estimate_full(profile: full_profile, samples: measured_samples.first(3))
+    end
+    assert_raises(XrplReserveStudy::ProvisioningBenchmarkError) do
+      benchmark.estimate_full(
+        profile: full_profile,
+        samples: measured_samples.first(3),
+        one_million_checkpoint: unmeasured_one_million_checkpoint.reject { |key| key == "reason" }
+      )
+    end
+
+    result = benchmark.estimate_full(
+      profile: full_profile,
+      samples: measured_samples.first(3),
+      one_million_checkpoint: unmeasured_one_million_checkpoint
+    )
     checkpoint = result.fetch("planning_checkpoints").last
 
     assert_equal 1_000_000, checkpoint.fetch("account_root_target")
-    assert_equal "not-measured", checkpoint.fetch("measurement_status")
+    assert_equal "not_measured", checkpoint.fetch("measurement_status")
+    assert_equal "not-yet-executed", checkpoint.fetch("reason")
     refute checkpoint.key?("artifact_sha256")
     assert_equal [10_000, 25_000, 50_000], result.fetch("measured_account_root_targets")
+  end
+
+  # Break caught: declaring the checkpoint measured without its exact 1m
+  # sample artifact or declaring it unmeasured while supplying that sample.
+  def test_one_million_disposition_must_match_measured_samples
+    assert_raises(XrplReserveStudy::ProvisioningBenchmarkError) do
+      benchmark.estimate_full(
+        profile: full_profile,
+        samples: measured_samples,
+        one_million_checkpoint: measured_one_million_checkpoint.merge("artifact_sha256" => "f" * 64)
+      )
+    end
+    assert_raises(XrplReserveStudy::ProvisioningBenchmarkError) do
+      benchmark.estimate_full(
+        profile: full_profile,
+        samples: measured_samples,
+        one_million_checkpoint: unmeasured_one_million_checkpoint
+      )
+    end
   end
 
   # Break caught: an extrapolator whose projected work decreases as the
   # declared population grows.
   def test_non_binding_projections_are_monotonic_in_population_work
-    projections = benchmark.estimate_full(profile: full_profile, samples: measured_samples).fetch("projections")
+    projections = benchmark_estimate.fetch("projections")
     ordered = projections.sort_by { |projection| projection.fetch("population_work_units") }
 
     minimums = ordered.map { |projection| projection.dig("provisioning_seconds_range", "minimum") }
@@ -83,7 +119,7 @@ class ProvisioningBenchmarkTest < Minitest::Test
       samples = measured_samples.map(&:dup)
       samples.first[key] = value
       assert_raises(XrplReserveStudy::ProvisioningBenchmarkError, key) do
-        benchmark.estimate_full(profile: full_profile, samples: samples)
+        benchmark.estimate_full(profile: full_profile, samples: samples, one_million_checkpoint: measured_one_million_checkpoint)
       end
     end
   end
@@ -94,26 +130,26 @@ class ProvisioningBenchmarkTest < Minitest::Test
     samples = measured_samples.map(&:dup)
     samples.first.delete("io_write_bytes")
     assert_raises(XrplReserveStudy::ProvisioningBenchmarkError) do
-      benchmark.estimate_full(profile: full_profile, samples: samples)
+      benchmark.estimate_full(profile: full_profile, samples: samples, one_million_checkpoint: measured_one_million_checkpoint)
     end
 
     samples = measured_samples.map(&:dup)
     samples.first["reset_confirmed"] = false
     assert_raises(XrplReserveStudy::ProvisioningBenchmarkError) do
-      benchmark.estimate_full(profile: full_profile, samples: samples)
+      benchmark.estimate_full(profile: full_profile, samples: samples, one_million_checkpoint: measured_one_million_checkpoint)
     end
 
     samples = measured_samples.map(&:dup)
     samples.first["artifact_sha256"] = "not-a-sha"
     assert_raises(XrplReserveStudy::ProvisioningBenchmarkError) do
-      benchmark.estimate_full(profile: full_profile, samples: samples)
+      benchmark.estimate_full(profile: full_profile, samples: samples, one_million_checkpoint: measured_one_million_checkpoint)
     end
 
 
     samples = measured_samples.map(&:dup)
     samples[1]["artifact_sha256"] = samples[0].fetch("artifact_sha256")
     assert_raises(XrplReserveStudy::ProvisioningBenchmarkError) do
-      benchmark.estimate_full(profile: full_profile, samples: samples)
+      benchmark.estimate_full(profile: full_profile, samples: samples, one_million_checkpoint: measured_one_million_checkpoint)
     end
   end
 

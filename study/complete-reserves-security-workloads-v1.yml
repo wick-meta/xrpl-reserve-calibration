@@ -1,6 +1,7 @@
 schema_version: complete-reserves-security-workloads-v1
 network_scope: isolated-network-only
 counted_run: false
+execution_authorized: false
 workloads:
   - workload_id: baseline
     transaction_ceiling: 100
@@ -17,6 +18,8 @@ workloads:
 gates:
   transaction_success:
     minimum: 0.99
+  transaction_ceiling:
+    declared_per_workload: true
   close_time_ceiling:
     maximum: 5.0
     baseline_multiplier_maximum: 2.0
