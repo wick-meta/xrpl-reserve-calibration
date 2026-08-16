@@ -31,6 +31,18 @@ module XrplReserveStudy
     NUDB_DAT_HEADER_SIZE = 92
     NUDB_KEY_HEADER_SIZE = 104
     BINARY_IDENTITY_ASSIGNMENT = /(?:machine(?:[_ -]?id)?|operator|location|hostname|host|user|path|endpoint|secret|seed|private[_ -]?key|master[_ -]?key)\s*[=:]/in
+    IDENTITY_TOKENS = [
+      "machine", "machine_id", "machine-id", "operator", "location", "hostname", "host", "user", "path",
+      "endpoint", "secret", "seed", "private_key", "private-key", "private key", "master_key", "master-key", "master key"
+    ].freeze
+    IDENTITY_ENCODINGS = [Encoding::UTF_8, Encoding::UTF_16LE, Encoding::UTF_16BE, Encoding::UTF_32LE, Encoding::UTF_32BE].freeze
+    ENCODED_NUL_IDENTITY_SEQUENCES = IDENTITY_TOKENS.flat_map do |token|
+      IDENTITY_ENCODINGS.flat_map do |encoding|
+        encoded_token = token.encode(encoding).b
+        encoded_nul = "\0".encode(encoding).b
+        [encoded_token + encoded_nul, encoded_nul + encoded_token]
+      end
+    end.uniq.freeze
     SEED_RESULT_KEYS = %w[schema_version profile_id cell_id counted_run elapsed_seconds attempted_transactions validated_transactions burned_fee_drops locked_xrp_drops released_xrp_drops finality classified_ledger_evidence resource_snapshots].freeze
 
     def initialize(runtime:, runtime_root: RuntimePublisher::RUNTIME_ROOT)
@@ -439,8 +451,10 @@ module XrplReserveStudy
     end
 
     def reject_binary_identity!(bytes)
-      collapsed = bytes.delete("\0").downcase
-      if bytes.downcase.match?(BINARY_IDENTITY_ASSIGNMENT) || collapsed.match?(BINARY_IDENTITY_ASSIGNMENT)
+      lowered = bytes.downcase
+      collapsed = lowered.delete("\0")
+      nul_delimited_identity = ENCODED_NUL_IDENTITY_SEQUENCES.any? { |sequence| lowered.include?(sequence) }
+      if lowered.match?(BINARY_IDENTITY_ASSIGNMENT) || collapsed.match?(BINARY_IDENTITY_ASSIGNMENT) || nul_delimited_identity
         raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
       end
     end

@@ -274,6 +274,26 @@ class VerifiedStateSnapshotTest < Minitest::Test
     assert_equal "runtime state violates strict artifact policy", error.message
   end
 
+  # Break caught: NUL-delimited identity fields in a valid NuDB record bypassed assignment-only scanning.
+  def test_rejects_nul_delimited_identity_inside_valid_nudb_record
+    add_nudb_record("machine_id\0operator-7".b)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: an encoded NUL-delimited local identity bypassed raw-byte token matching.
+  def test_rejects_encoded_nul_delimited_identity_inside_valid_nudb_record
+    add_nudb_record("host\0node-7".encode("UTF-16LE").b)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
   # Break caught: peer discovery endpoints are local cache data, not ledger state, and must not enter clones.
   def test_validates_then_scrubs_peerfinder_sqlite_cache
     File.binwrite(File.join(@state, "peerfinder.sqlite"), minimal_sqlite_database)
@@ -322,6 +342,25 @@ class VerifiedStateSnapshotTest < Minitest::Test
     bytes[92, 4] = [1].pack("N")
     bytes[100, 8] = [13, 0, 0, 0, 0, 2, 0, 0].pack("C8")
     bytes.b
+  end
+
+  def add_nudb_record(payload)
+    dat_path = File.join(@state, "nudb", "nudb.dat")
+    dat = File.binread(dat_path)
+    data_offset = dat.bytesize
+    File.binwrite(dat_path, dat + uint48_bytes(payload.bytesize) + ("k" * 32) + payload)
+
+    key_path = File.join(@state, "nudb", "nudb.key")
+    key = File.binread(key_path)
+    bucket = "\0" * 4096
+    bucket[0, 2] = [1].pack("n")
+    bucket[8, 18] = uint48_bytes(data_offset) + uint48_bytes(payload.bytesize) + uint48_bytes(1)
+    key[4096, 4096] = bucket
+    File.binwrite(key_path, key)
+  end
+
+  def uint48_bytes(value)
+    [value >> 32, value & 0xffff_ffff].pack("nN")
   end
 
   def identity
