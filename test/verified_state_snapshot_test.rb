@@ -8,7 +8,6 @@ require "zlib"
 require_relative "../lib/xrpl_reserve_study"
 
 class VerifiedStateSnapshotTest < Minitest::Test
-  STATE_BYTES = "\xFF\xFF\xFF".b
 
   class CheckoutRuntime
     attr_reader :events
@@ -42,7 +41,7 @@ class VerifiedStateSnapshotTest < Minitest::Test
     @runtime_root = Dir.mktmpdir("verified-state-runtime-")
     @state = File.join(@runtime_root, "checkout-state")
     FileUtils.mkdir_p(@state)
-    File.binwrite(File.join(@state, "ledger.db"), STATE_BYTES)
+    write_minimal_nudb_state(@state)
     @ledger = {
       "network_id" => "candidate-private", "ledger_index" => 9,
       "ledger_hash" => "a" * 64, "account_roots" => 2,
@@ -61,8 +60,8 @@ class VerifiedStateSnapshotTest < Minitest::Test
     snapshot = @publisher.publish(identity: identity, seed_result: seed_result)
 
     assert_equal %i[stop start_readonly], @runtime.events
-    assert File.file?(File.join(snapshot.fetch("path"), "state", "ledger.db"))
-    assert_equal ["ledger.db"], snapshot.fetch("files").map { |entry| entry.fetch("name") }
+    assert File.file?(File.join(snapshot.fetch("path"), "state", "nudb", "nudb.dat"))
+    assert_equal %w[nudb/nudb.dat nudb/nudb.key], snapshot.fetch("files").map { |entry| entry.fetch("name") }
     assert_equal @ledger, snapshot.fetch("ledger")
     assert @publisher.verify!(snapshot)
   end
@@ -233,7 +232,97 @@ class VerifiedStateSnapshotTest < Minitest::Test
     assert_equal "runtime state violates strict artifact policy", error.message
   end
 
+  # Break caught: the fake-only policy rejected the NuDB files emitted by the pinned candidate runtime.
+  def test_accepts_structurally_valid_rippled_nudb_state
+    snapshot = @publisher.publish(identity: identity, seed_result: seed_result)
+
+    names = snapshot.fetch("files").map { |entry| entry.fetch("name") }
+    assert_equal %w[nudb/nudb.dat nudb/nudb.key], names
+    assert @publisher.verify!(snapshot)
+  end
+
+  # Break caught: a filename-only allowlist would admit forged bytes that a candidate NuDB cannot open.
+  def test_rejects_malformed_nudb_header
+    File.binwrite(File.join(@state, "nudb", "nudb.dat"), "nudb.dat" + "\0" * 84)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: individually plausible NuDB files from different databases cannot form one restartable image.
+  def test_rejects_mismatched_nudb_pair
+    key = File.binread(File.join(@state, "nudb", "nudb.key"))
+    key[10, 8] = [0x1112_1314_1516_1718].pack("Q>")
+    File.binwrite(File.join(@state, "nudb", "nudb.key"), key)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: a valid NuDB header must not make embedded machine identity admissible.
+  def test_rejects_binary_identity_inside_recognized_nudb_file
+    path = File.join(@state, "nudb", "nudb.dat")
+    File.binwrite(path, File.binread(path) + "\x00machine_id=operator-7\x00".b)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: peer discovery endpoints are local cache data, not ledger state, and must not enter clones.
+  def test_validates_then_scrubs_peerfinder_sqlite_cache
+    File.binwrite(File.join(@state, "peerfinder.sqlite"), minimal_sqlite_database)
+
+    snapshot = @publisher.publish(identity: identity, seed_result: seed_result)
+
+    refute File.exist?(File.join(snapshot.fetch("path"), "state", "peerfinder.sqlite"))
+    assert_equal %w[nudb/nudb.dat nudb/nudb.key], snapshot.fetch("files").map { |entry| entry.fetch("name") }
+  end
+
+  # Break caught: a known cache filename cannot be used to smuggle arbitrary or identity-bearing bytes.
+  def test_rejects_fake_peerfinder_sqlite_cache
+    File.binwrite(File.join(@state, "peerfinder.sqlite"), "SQLite format 3\0machine_id=operator-7".b)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
   private
+
+  def write_minimal_nudb_state(root)
+    directory = File.join(root, "nudb")
+    FileUtils.mkdir_p(directory)
+    uid = 0x0102_0304_0506_0708
+    common = [2].pack("n") + [uid, 1].pack("Q>Q>") + [32].pack("n")
+    dat_header = "nudb.dat".b + common + ("\0" * 64)
+    key_header = "nudb.key".b + common +
+      [0x1112_1314_1516_1718, 0x2122_2324_2526_2728].pack("Q>Q>") +
+      [4096, 32_768].pack("n2") + ("\0" * 56)
+    File.binwrite(File.join(directory, "nudb.dat"), dat_header)
+    File.binwrite(File.join(directory, "nudb.key"), key_header.ljust(8192, "\0"))
+  end
+
+  def minimal_sqlite_database
+    bytes = "\0" * 512
+    bytes[0, 16] = "SQLite format 3\0"
+    bytes[16, 2] = [512].pack("n")
+    bytes[18, 6] = [1, 1, 0, 64, 32, 32].pack("C6")
+    bytes[24, 4] = [1].pack("N")
+    bytes[28, 4] = [1].pack("N")
+    bytes[40, 4] = [1].pack("N")
+    bytes[44, 4] = [4].pack("N")
+    bytes[56, 4] = [1].pack("N")
+    bytes[92, 4] = [1].pack("N")
+    bytes[100, 8] = [13, 0, 0, 0, 0, 2, 0, 0].pack("C8")
+    bytes.b
+  end
 
   def identity
     {

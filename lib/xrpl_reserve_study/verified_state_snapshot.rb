@@ -20,11 +20,17 @@ module XrplReserveStudy
     FORBIDDEN_KEY = /secret|seed|private.?key|master.?key|endpoint|host|user|path|url/i
     FORBIDDEN_TEXT = /(?:\A[rs][1-9A-HJ-NP-Za-km-z]{20,}\z|https?:\/\/|\b(?:mainnet|testnet|localhost)\b|(?:secret|seed|private.?key|master.?key|endpoint|host|user|path)\s*[=:])/i
     LOCAL_IDENTITY = /machine|operator|location|hostname|host|user|path|endpoint|secret|seed|private.?key|master.?key/i
-    # The only opaque format admitted without a parser is the deliberately
-    # content-free fake-state image used by the bounded Task 4 harness. Real
-    # candidate database formats stay fail-closed until concrete runtime work
-    # implements their format-specific parser/scrubber.
-    FAKE_STATE_BYTE = 0xFF
+    CANDIDATE_STATE_DIRECTORIES = %w[nudb].freeze
+    CANDIDATE_NUDB_FILES = %w[nudb/nudb.dat nudb/nudb.key].freeze
+    SCRUBBED_RUNTIME_CACHES = %w[peerfinder.sqlite].freeze
+    NUDB_VERSION = 2
+    NUDB_APPNUM = 1
+    NUDB_KEY_SIZE = 32
+    NUDB_BLOCK_SIZE = 4096
+    NUDB_LOAD_FACTOR = 32_768
+    NUDB_DAT_HEADER_SIZE = 92
+    NUDB_KEY_HEADER_SIZE = 104
+    BINARY_IDENTITY_ASSIGNMENT = /(?:machine(?:[_ -]?id)?|operator|location|hostname|host|user|path|endpoint|secret|seed|private[_ -]?key|master[_ -]?key)\s*[=:]/in
     SEED_RESULT_KEYS = %w[schema_version profile_id cell_id counted_run elapsed_seconds attempted_transactions validated_transactions burned_fee_drops locked_xrp_drops released_xrp_drops finality classified_ledger_evidence resource_snapshots].freeze
 
     def initialize(runtime:, runtime_root: RuntimePublisher::RUNTIME_ROOT)
@@ -92,7 +98,11 @@ module XrplReserveStudy
         ensure
           state_handle.close
         end
-        resolved = safe_manifest!(File.join(public.fetch("path"), "state"))
+        begin
+          resolved = safe_manifest!(File.join(public.fetch("path"), "state"))
+        rescue VerifiedStateSnapshotError
+          raise VerifiedStateSnapshotError, "snapshot state manifest does not match image"
+        end
         raise VerifiedStateSnapshotError, "snapshot state manifest does not match image" unless actual == public.fetch("files") && resolved == public.fetch("files")
         unless directory_binding!(public.fetch("path")) == public.fetch("directory_binding")
           raise VerifiedStateSnapshotError, "snapshot root or ancestor is not the published directory"
@@ -146,20 +156,31 @@ module XrplReserveStudy
       root_stat = File.lstat(root)
       raise VerifiedStateSnapshotError, "runtime state is incomplete" unless root_stat.directory?
       entries = []
+      admitted = {}
       Find.find(root) do |path|
         next if path == root
         relative = path.delete_prefix("#{root}#{File::SEPARATOR}")
         stat = File.lstat(path)
         if stat.directory?
+          unless CANDIDATE_STATE_DIRECTORIES.include?(relative)
+            raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
+          end
           next
         elsif stat.file?
           reject_state_name!(relative)
-          reject_state_content!(path, relative)
+          bytes = File.binread(path)
+          if SCRUBBED_RUNTIME_CACHES.include?(relative)
+            validate_sqlite_cache!(bytes)
+            next
+          end
+          reject_state_bytes!(bytes, name: relative)
+          admitted[relative] = bytes
           entries << { "name" => relative, "bytes" => stat.size, "sha256" => Digest::SHA256.file(path).hexdigest }
         else
           raise VerifiedStateSnapshotError, "runtime state contains symlink or device"
         end
       end
+      validate_candidate_state_image!(admitted)
       raise VerifiedStateSnapshotError, "runtime state is incomplete" if entries.empty?
       entries.sort_by { |entry| entry.fetch("name") }.freeze
     end
@@ -277,10 +298,6 @@ module XrplReserveStudy
       raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if name.match?(LOCAL_IDENTITY)
     end
 
-    def reject_state_content!(path, name)
-      reject_state_bytes!(File.binread(path), name: name)
-    end
-
     def reject_sensitive!(value)
       case value
       when Hash
@@ -331,8 +348,109 @@ module XrplReserveStudy
 
     def reject_state_bytes!(bytes, name:)
       raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless bytes.is_a?(String) && !bytes.empty?
-      valid_fake_state = safe_relative?(name) && bytes.each_byte.all? { |byte| byte == FAKE_STATE_BYTE }
-      raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless valid_fake_state
+      reject_binary_identity!(bytes)
+      case name
+      when "nudb/nudb.dat" then parse_nudb_dat!(bytes)
+      when "nudb/nudb.key" then parse_nudb_key!(bytes)
+      else raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
+      end
+    end
+
+    def validate_candidate_state_image!(files)
+      unless files.keys.sort == CANDIDATE_NUDB_FILES
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
+      end
+      dat = parse_nudb_dat!(files.fetch("nudb/nudb.dat"))
+      key = parse_nudb_key!(files.fetch("nudb/nudb.key"))
+      unless dat.values_at(:version, :uid, :appnum, :key_size) == key.values_at(:version, :uid, :appnum, :key_size)
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
+      end
+      validate_nudb_data_records!(files.fetch("nudb/nudb.dat"), dat.fetch(:key_size))
+      validate_nudb_buckets!(files.fetch("nudb/nudb.key"), files.fetch("nudb/nudb.dat"), key)
+    end
+
+    def parse_nudb_dat!(bytes)
+      valid = bytes.bytesize >= NUDB_DAT_HEADER_SIZE && bytes.byteslice(0, 8) == "nudb.dat" &&
+        bytes.byteslice(8, 2).unpack1("n") == NUDB_VERSION && bytes.byteslice(18, 8).unpack1("Q>") == NUDB_APPNUM &&
+        bytes.byteslice(26, 2).unpack1("n") == NUDB_KEY_SIZE && zero_bytes?(bytes.byteslice(28, 64))
+      raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless valid
+      { version: NUDB_VERSION, uid: bytes.byteslice(10, 8).unpack1("Q>"), appnum: NUDB_APPNUM, key_size: NUDB_KEY_SIZE }
+    end
+
+    def parse_nudb_key!(bytes)
+      valid = bytes.bytesize >= (NUDB_BLOCK_SIZE * 2) && bytes.bytesize.modulo(NUDB_BLOCK_SIZE).zero? &&
+        bytes.byteslice(0, 8) == "nudb.key" && bytes.byteslice(8, 2).unpack1("n") == NUDB_VERSION &&
+        bytes.byteslice(18, 8).unpack1("Q>") == NUDB_APPNUM && bytes.byteslice(26, 2).unpack1("n") == NUDB_KEY_SIZE &&
+        bytes.byteslice(44, 2).unpack1("n") == NUDB_BLOCK_SIZE && bytes.byteslice(46, 2).unpack1("n") == NUDB_LOAD_FACTOR &&
+        !zero_bytes?(bytes.byteslice(28, 8)) && !zero_bytes?(bytes.byteslice(36, 8)) && zero_bytes?(bytes.byteslice(48, 56))
+      raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless valid
+      { version: NUDB_VERSION, uid: bytes.byteslice(10, 8).unpack1("Q>"), appnum: NUDB_APPNUM,
+        key_size: NUDB_KEY_SIZE, block_size: NUDB_BLOCK_SIZE }
+    end
+
+    def validate_nudb_data_records!(bytes, key_size)
+      offset = NUDB_DAT_HEADER_SIZE
+      while offset < bytes.bytesize
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if bytes.bytesize - offset < 6
+        size = uint48(bytes.byteslice(offset, 6))
+        offset += 6
+        if size.positive?
+          offset += key_size + size
+        else
+          raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if bytes.bytesize - offset < 2
+          spill_size = bytes.byteslice(offset, 2).unpack1("n")
+          offset += 2 + spill_size
+        end
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if offset > bytes.bytesize
+      end
+    end
+
+    def validate_nudb_buckets!(key_bytes, dat_bytes, key)
+      capacity = (key.fetch(:block_size) - 8) / 18
+      (key.fetch(:block_size)...key_bytes.bytesize).step(key.fetch(:block_size)) do |offset|
+        bucket = key_bytes.byteslice(offset, key.fetch(:block_size))
+        count = bucket.byteslice(0, 2).unpack1("n")
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if count > capacity
+        count.times do |index|
+          item = bucket.byteslice(8 + (index * 18), 18)
+          data_offset = uint48(item.byteslice(0, 6))
+          data_size = uint48(item.byteslice(6, 6))
+          valid = data_offset >= NUDB_DAT_HEADER_SIZE && data_size.positive? &&
+            data_offset + 6 + key.fetch(:key_size) + data_size <= dat_bytes.bytesize
+          raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless valid
+        end
+      end
+    end
+
+    def validate_sqlite_cache!(bytes)
+      reject_binary_identity!(bytes)
+      page_size = bytes.bytesize >= 100 ? bytes.byteslice(16, 2).unpack1("n") : 0
+      page_size = 65_536 if page_size == 1
+      page_count = bytes.bytesize >= 32 ? bytes.byteslice(28, 4).unpack1("N") : 0
+      schema_format = bytes.bytesize >= 48 ? bytes.byteslice(44, 4).unpack1("N") : 0
+      encoding = bytes.bytesize >= 60 ? bytes.byteslice(56, 4).unpack1("N") : 0
+      valid = bytes.bytesize >= 512 && bytes.byteslice(0, 16) == "SQLite format 3\0" &&
+        page_size.between?(512, 65_536) && (page_size & (page_size - 1)).zero? && bytes.bytesize.modulo(page_size).zero? &&
+        [1, 2].include?(bytes.getbyte(18)) && [1, 2].include?(bytes.getbyte(19)) &&
+        bytes.getbyte(21) == 64 && bytes.getbyte(22) == 32 && bytes.getbyte(23) == 32 &&
+        page_count == bytes.bytesize / page_size && schema_format.between?(1, 4) && encoding.between?(1, 3) &&
+        [2, 5, 10, 13].include?(bytes.getbyte(100))
+      raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless valid
+    end
+
+    def reject_binary_identity!(bytes)
+      collapsed = bytes.delete("\0").downcase
+      if bytes.downcase.match?(BINARY_IDENTITY_ASSIGNMENT) || collapsed.match?(BINARY_IDENTITY_ASSIGNMENT)
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
+      end
+    end
+
+    def zero_bytes?(bytes)
+      bytes && bytes.each_byte.all?(&:zero?)
+    end
+
+    def uint48(bytes)
+      bytes.each_byte.reduce(0) { |value, byte| (value << 8) | byte }
     end
 
     def with_bound_snapshot(snapshot)
@@ -365,7 +483,8 @@ module XrplReserveStudy
     end
 
     def bound_manifest!(directory, expected)
-      expected.map do |entry|
+      admitted = {}
+      manifest = expected.map do |entry|
         components = entry.fetch("name").split(File::SEPARATOR)
         parent = directory
         opened = []
@@ -377,10 +496,13 @@ module XrplReserveStudy
         bytes = read_bound_file!(parent, components.last)
         reject_state_name!(entry.fetch("name"))
         reject_state_bytes!(bytes, name: entry.fetch("name"))
+        admitted[entry.fetch("name")] = bytes
         { "name" => entry.fetch("name"), "bytes" => bytes.bytesize, "sha256" => Digest::SHA256.hexdigest(bytes) }
       ensure
         opened&.reverse_each(&:close)
       end.sort_by { |entry| entry.fetch("name") }
+      validate_candidate_state_image!(admitted)
+      manifest
     rescue Errno::ELOOP, Errno::ENOTDIR
       raise VerifiedStateSnapshotError, "runtime state contains symlink or device"
     end
