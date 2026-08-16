@@ -2,6 +2,14 @@
 
 module XrplReserveStudy
   module CapacityMetrics
+    PROVISIONING_METRIC_NAMES = %w[
+      build_wall_seconds snapshot_wall_seconds clone_wall_seconds reset_wall_seconds recovery_wall_seconds
+      allocated_logical_cpus cpu_seconds peak_memory_bytes state_disk_bytes io_read_bytes io_write_bytes
+      attempted_transactions validated_transactions burned_fees_drops locked_xrp_drops released_xrp_drops
+      ledger_growth_bytes database_growth_bytes ledger_close_seconds_p95 max_queue_depth finality_seconds_p95
+      reset_confirmed recovery_confirmed
+    ].freeze
+
     class Error < StudyError; end
 
     class Reducer

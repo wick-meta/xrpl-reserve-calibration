@@ -1,0 +1,45 @@
+schema_version: complete-reserves-security-workloads-v1
+network_scope: isolated-network-only
+counted_run: false
+workloads:
+  - workload_id: baseline
+    transaction_ceiling: 100
+  - workload_id: account-burst
+    transaction_ceiling: 500
+  - workload_id: object-burst
+    transaction_ceiling: 500
+  - workload_id: mixed
+    transaction_ceiling: 500
+  - workload_id: churn
+    transaction_ceiling: 500
+  - workload_id: recovery
+    transaction_ceiling: 100
+gates:
+  transaction_success:
+    minimum: 0.99
+  close_time_ceiling:
+    maximum: 5.0
+    baseline_multiplier_maximum: 2.0
+  memory_ceiling:
+    maximum_resource_ratio: 0.9
+    baseline_multiplier_maximum: 2.0
+  cpu_ceiling:
+    maximum: 0.9
+    baseline_multiplier_maximum: 4.0
+  disk_ceiling:
+    minimum_free_ratio: 0.1
+  io_wait_ceiling:
+    maximum: 0.25
+    baseline_multiplier_maximum: 5.0
+  queue_ceiling:
+    maximum: 1000
+    baseline_multiplier_maximum: 100.0
+  finality_ceiling:
+    maximum: 30.0
+    baseline_multiplier_maximum: 4.0
+  recovery_ceiling:
+    maximum: 300.0
+  reset_recovery:
+    required: true
+  artifact_integrity:
+    sha256_required: true

@@ -23,12 +23,68 @@ module XrplReserveStudy
       { "run_id" => result.fetch("run_id"), "output_dir" => output }.freeze
     end
 
+    def publish_planning_bundle(benchmark:, schedule:, security:)
+      validate_planning!(benchmark, schedule, security)
+      records = {
+        "benchmark.json" => JSON.pretty_generate(benchmark) + "\n",
+        "schedule.json" => JSON.pretty_generate(schedule) + "\n",
+        "security.json" => JSON.pretty_generate(security) + "\n"
+      }
+      sums = records.transform_values { |bytes| Digest::SHA256.hexdigest(bytes) }
+      records["SHA256SUMS"] = sums.keys.sort.map { |name| "#{sums.fetch(name)}  #{name}\n" }.join
+      output = File.join(RuntimePublisher::RUNTIME_ROOT, "complete-reserves", "planning", schedule.fetch("schedule_sha256"))
+      @publisher.publish(output) { |staging| records.each { |name, bytes| staging.write(name, bytes) } }
+      {
+        "schedule_sha256" => schedule.fetch("schedule_sha256"),
+        "output_dir" => output,
+        "artifact_sha256" => sums.freeze
+      }.freeze
+    rescue KeyError, TypeError
+      raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle"
+    end
+
     private
 
     def validate!(result, summary)
       raise CompleteReservesArtifactsError, "incomplete complete reserves disposition" unless result.is_a?(Hash) && REQUIRED.all? { |key| result.key?(key) } && %w[passed failed aborted].include?(result["status"]) && result["counted_run"] == false
       reject_sensitive!(result)
       reject_sensitive!(summary)
+    end
+
+    def validate_planning!(benchmark, schedule, security)
+      valid = benchmark.is_a?(Hash) && schedule.is_a?(Hash) && security.is_a?(Hash) &&
+        benchmark["schema_version"] == "complete-reserves-provisioning-estimate-v1" &&
+        schedule["schema_version"] == "complete-reserves-profile-schedule-v1" &&
+        security["schema_version"] == "complete-reserves-security-evaluation-v1" &&
+        [benchmark, schedule, security].all? { |record| record["counted_run"] == false } &&
+        [benchmark, schedule].all? { |record| record["execution_authorized"] == false } &&
+        schedule["benchmark_sha256"] == benchmark["benchmark_sha256"] &&
+        schedule["profile_sha256"] == benchmark["profile_sha256"] &&
+        security["profile_sha256"] == benchmark["profile_sha256"] &&
+        [schedule, security].all? { |record| record["distribution_sha256"] == benchmark["distribution_sha256"] } &&
+        [schedule, security].all? { |record| record["candidate_sha256"] == benchmark["candidate_sha256"] } &&
+        valid_record_hash?(benchmark, "benchmark_sha256") && valid_record_hash?(schedule, "schedule_sha256") &&
+        valid_record_hash?(security, "security_sha256")
+      raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle" unless valid
+      reject_sensitive!(benchmark)
+      reject_sensitive!(schedule)
+      reject_sensitive!(security)
+    end
+
+    def valid_record_hash?(record, field)
+      claimed = record[field]
+      return false unless claimed.is_a?(String) && claimed.match?(/\A[0-9a-f]{64}\z/)
+
+      canonical = canonical(record.reject { |key, _| key == field })
+      Digest::SHA256.hexdigest(JSON.generate(canonical)) == claimed
+    end
+
+    def canonical(value)
+      case value
+      when Hash then value.keys.sort.to_h { |key| [key, canonical(value.fetch(key))] }
+      when Array then value.map { |entry| canonical(entry) }
+      else value
+      end
     end
 
     def reject_sensitive!(value)
