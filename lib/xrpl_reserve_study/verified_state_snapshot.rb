@@ -370,8 +370,8 @@ module XrplReserveStudy
       unless dat.values_at(:version, :uid, :appnum, :key_size) == key.values_at(:version, :uid, :appnum, :key_size)
         raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
       end
-      validate_nudb_data_records!(files.fetch("nudb/nudb.dat"), dat.fetch(:key_size))
-      validate_nudb_buckets!(files.fetch("nudb/nudb.key"), files.fetch("nudb/nudb.dat"), key)
+      spill_links = validate_nudb_data_records!(files.fetch("nudb/nudb.dat"), key)
+      validate_nudb_buckets!(files.fetch("nudb/nudb.key"), files.fetch("nudb/nudb.dat"), key, spill_links)
     end
 
     def parse_nudb_dat!(bytes)
@@ -393,7 +393,10 @@ module XrplReserveStudy
         key_size: NUDB_KEY_SIZE, block_size: NUDB_BLOCK_SIZE }
     end
 
-    def validate_nudb_data_records!(bytes, key_size)
+    def validate_nudb_data_records!(bytes, key)
+      key_size = key.fetch(:key_size)
+      spill_capacity = (key.fetch(:block_size) - 8) / 18
+      spill_links = {}
       offset = NUDB_DAT_HEADER_SIZE
       while offset < bytes.bytesize
         raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if bytes.bytesize - offset < 6
@@ -411,26 +414,74 @@ module XrplReserveStudy
         else
           raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if bytes.bytesize - offset < 2
           spill_size = bytes.byteslice(offset, 2).unpack1("n")
-          offset += 2 + spill_size
+          offset += 2
+          spill = bytes.byteslice(offset, spill_size)
+          raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless spill&.bytesize == spill_size
+          reject_binary_identity!(spill)
+          valid_size = spill_size >= 8 && (spill_size - 8).modulo(18).zero? && (spill_size - 8) / 18 <= spill_capacity
+          raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless valid_size
+          count = spill.byteslice(0, 2).unpack1("n")
+          raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless spill_size == 8 + (count * 18)
+          spill_body_offset = offset
+          spill_links[spill_body_offset] = uint48(spill.byteslice(2, 6))
+          count.times do |index|
+            entry = spill.byteslice(8 + (index * 18), 18)
+            validate_nudb_entry!(entry, bytes, key_size)
+          end
+          offset += spill_size
         end
         raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if offset > bytes.bytesize
       end
+      spill_links.each_value do |next_spill|
+        next if next_spill.zero?
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless spill_links.key?(next_spill)
+      end
+      spill_links.freeze
     end
 
-    def validate_nudb_buckets!(key_bytes, dat_bytes, key)
+    def validate_nudb_buckets!(key_bytes, dat_bytes, key, spill_links)
       capacity = (key.fetch(:block_size) - 8) / 18
+      spill_roots = []
       (key.fetch(:block_size)...key_bytes.bytesize).step(key.fetch(:block_size)) do |offset|
         bucket = key_bytes.byteslice(offset, key.fetch(:block_size))
         count = bucket.byteslice(0, 2).unpack1("n")
         raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if count > capacity
+        spill_root = uint48(bucket.byteslice(2, 6))
+        spill_roots << spill_root unless spill_root.zero?
         count.times do |index|
           item = bucket.byteslice(8 + (index * 18), 18)
-          data_offset = uint48(item.byteslice(0, 6))
-          data_size = uint48(item.byteslice(6, 6))
-          valid = data_offset >= NUDB_DAT_HEADER_SIZE && data_size.positive? &&
-            data_offset + 6 + key.fetch(:key_size) + data_size <= dat_bytes.bytesize
-          raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless valid
+          validate_nudb_entry!(item, dat_bytes, key.fetch(:key_size))
         end
+      end
+      validate_spill_chains!(spill_roots, spill_links)
+    end
+
+    def validate_nudb_entry!(entry, dat_bytes, key_size)
+      data_offset = uint48(entry.byteslice(0, 6))
+      data_size = uint48(entry.byteslice(6, 6))
+      valid = data_offset >= NUDB_DAT_HEADER_SIZE && data_size.positive? &&
+        data_offset + 6 + key_size + data_size <= dat_bytes.bytesize &&
+        uint48(dat_bytes.byteslice(data_offset, 6)) == data_size
+      raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless valid
+      reject_binary_identity!(dat_bytes.byteslice(data_offset + 6, key_size))
+      reject_binary_identity!(dat_bytes.byteslice(data_offset + 6 + key_size, data_size))
+    end
+
+    def validate_spill_chains!(roots, links)
+      visited = {}
+      roots.each do |root|
+        current = root
+        chain = {}
+        until current.zero?
+          unless links.key?(current) && !chain.key?(current)
+            raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
+          end
+          chain[current] = visited[current] = true
+          current = links.fetch(current)
+        end
+      end
+      unless visited.keys.sort == links.keys.sort
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
       end
     end
 

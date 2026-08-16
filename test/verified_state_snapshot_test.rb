@@ -373,6 +373,30 @@ class VerifiedStateSnapshotTest < Minitest::Test
     assert_equal "runtime state violates strict artifact policy", error.message
   end
 
+  # Break caught: zero-size NuDB spill records were skipped without structure or identity checks.
+  def test_rejects_machine_identity_inside_nudb_spill_record
+    add_nudb_record("safe".b)
+    add_nudb_spill("machine_id=operator-7".ljust(26, "\0").b)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: identity semantics can span otherwise bounded compact-bucket fields in a spill chain.
+  def test_rejects_semantic_identity_across_structurally_bounded_spill_bytes
+    add_nudb_record("safe".b)
+    entry = uint48_bytes(92) + uint48_bytes(4)
+    spill = [2].pack("n") + uint48_bytes(0) + entry + "host!!" + entry + "node-7"
+    add_nudb_spill(spill)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
   # Break caught: peer discovery endpoints are local cache data, not ledger state, and must not enter clones.
   def test_validates_then_scrubs_peerfinder_sqlite_cache
     File.binwrite(File.join(@state, "peerfinder.sqlite"), minimal_sqlite_database)
@@ -441,6 +465,18 @@ class VerifiedStateSnapshotTest < Minitest::Test
 
   def uint48_bytes(value)
     [value >> 32, value & 0xffff_ffff].pack("nN")
+  end
+
+  def add_nudb_spill(spill)
+    dat_path = File.join(@state, "nudb", "nudb.dat")
+    dat = File.binread(dat_path)
+    spill_record_offset = dat.bytesize
+    File.binwrite(dat_path, dat + uint48_bytes(0) + [spill.bytesize].pack("n") + spill)
+
+    key_path = File.join(@state, "nudb", "nudb.key")
+    key = File.binread(key_path)
+    key[4098, 6] = uint48_bytes(spill_record_offset + 8)
+    File.binwrite(key_path, key)
   end
 
   def identity
