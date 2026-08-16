@@ -7,6 +7,7 @@ module XrplReserveStudy
   class CompleteReservesArtifactsError < StudyError; end
 
   class CompleteReservesArtifacts
+    PLANNING_NETWORK_SCOPE = "isolated-network-only"
     SENSITIVE = /secret|seed|private[_-]?key|signature|signing|tx_blob|hostname|username|absolute[_-]?path|location|time[_-]?zone/i
     REQUIRED = %w[run_id status counted_run distribution_sha256 snapshot_id object_counts_by_class locked_xrp_drops released_xrp_drops owner_count_lifecycle].freeze
 
@@ -35,6 +36,7 @@ module XrplReserveStudy
         "benchmark_sha256" => benchmark.fetch("benchmark_sha256"),
         "schedule_sha256" => schedule.fetch("schedule_sha256"),
         "security_sha256" => security.fetch("security_sha256"),
+        "network_scope" => PLANNING_NETWORK_SCOPE,
         "counted_run" => false,
         "execution_authorized" => false
       }
@@ -71,6 +73,7 @@ module XrplReserveStudy
         benchmark["schema_version"] == "complete-reserves-provisioning-estimate-v1" &&
         schedule["schema_version"] == "complete-reserves-profile-schedule-v1" &&
         security["schema_version"] == "complete-reserves-security-evaluation-v1" &&
+        [benchmark, schedule, security].all? { |record| record["network_scope"] == PLANNING_NETWORK_SCOPE } &&
         [benchmark, schedule, security].all? { |record| record["counted_run"] == false } &&
         [benchmark, schedule, security].all? { |record| record["execution_authorized"] == false } &&
         schedule["benchmark_sha256"] == benchmark["benchmark_sha256"] &&

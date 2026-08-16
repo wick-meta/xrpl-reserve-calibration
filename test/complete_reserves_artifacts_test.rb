@@ -42,6 +42,7 @@ class CompleteReservesArtifactsTest < Minitest::Test
     bindings = JSON.parse(File.binread(File.join(output, "bindings.json")))
     assert_equal "complete-reserves-full-matrix-v1", bindings.fetch("profile_id")
     assert_equal security.fetch("security_sha256"), bindings.fetch("security_sha256")
+    assert_equal "isolated-network-only", bindings.fetch("network_scope")
     assert_equal false, bindings.fetch("execution_authorized")
     assert_equal schedule.fetch("security_config_sha256"), security.fetch("security_config_sha256")
     assert_equal "complete-reserves-full-matrix-v1", security.fetch("profile_id")
@@ -111,6 +112,29 @@ class CompleteReservesArtifactsTest < Minitest::Test
         )
       end
     end
+  end
+
+  # Break caught: treating a valid self-hash as sufficient when the security
+  # evidence was produced against a public network scope.
+  def test_rejects_rehashed_public_network_security_scope
+    estimate = benchmark_estimate
+    schedule = planning_schedule(estimate)
+    valid = XrplReserveStudy::SecurityWorkload.new.evaluate(baseline: security_baseline, observed: security_observed)
+    changed = Marshal.load(Marshal.dump(valid))
+    changed["network_scope"] = "public-test-network"
+    changed["security_sha256"] = Digest::SHA256.hexdigest(JSON.generate(canonical(changed.reject { |key, _| key == "security_sha256" })))
+    published = nil
+
+    assert_raises(XrplReserveStudy::CompleteReservesArtifactsError) do
+      published = XrplReserveStudy::CompleteReservesArtifacts.new.publish_planning_bundle(
+        benchmark: estimate,
+        schedule: schedule,
+        security: changed
+      )
+    end
+  ensure
+    output = published&.fetch("output_dir", nil)
+    FileUtils.rm_rf(output) if output&.start_with?(XrplReserveStudy::RuntimePublisher::RUNTIME_ROOT + File::SEPARATOR)
   end
 
   private
