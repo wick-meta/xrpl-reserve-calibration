@@ -19,6 +19,9 @@ module XrplReserveStudy
     SHA_KEYS = %w[candidate_image_digest study_sha256 distribution_sha256 config_sha256 source_sha256 ledger_hash].freeze
     FORBIDDEN_KEY = /secret|seed|private.?key|master.?key|endpoint|host|user|path|url/i
     FORBIDDEN_TEXT = /(?:\A[rs][1-9A-HJ-NP-Za-km-z]{20,}\z|https?:\/\/|\b(?:mainnet|testnet|localhost)\b|(?:secret|seed|private.?key|master.?key|endpoint|host|user|path)\s*[=:])/i
+    LOCAL_IDENTITY = /machine|operator|location|hostname|host|user|path|endpoint|secret|seed|private.?key|master.?key/i
+    SAFE_OPAQUE_TEXT = /\A[a-z0-9.-]+\z/
+    SEED_RESULT_KEYS = %w[schema_version profile_id cell_id counted_run elapsed_seconds attempted_transactions validated_transactions burned_fee_drops locked_xrp_drops released_xrp_drops finality classified_ledger_evidence resource_snapshots].freeze
 
     def initialize(runtime:, runtime_root: RuntimePublisher::RUNTIME_ROOT)
       @runtime = runtime
@@ -76,7 +79,7 @@ module XrplReserveStudy
       public = validate_snapshot_record!(snapshot)
       path = public.fetch("path")
       stored = JSON.parse(File.binread(File.join(path, "snapshot.json")))
-      expected = public.reject { |key, _| key == "path" }
+      expected = public.reject { |key, _| %w[path directory_binding].include?(key) }
       raise VerifiedStateSnapshotError, "snapshot record does not match image" unless stored == expected
       actual = safe_manifest!(File.join(path, "state"))
       raise VerifiedStateSnapshotError, "snapshot state manifest does not match image" unless actual == public.fetch("files")
@@ -97,7 +100,8 @@ module XrplReserveStudy
     end
 
     def ledger_from_seed!(seed_result)
-      valid = seed_result.is_a?(Hash) && seed_result["schema_version"] == "complete-reserves-seed-state-v2" &&
+      valid = seed_result.is_a?(Hash) && seed_result.keys.all? { |key| SEED_RESULT_KEYS.include?(key) } &&
+        seed_result["schema_version"] == "complete-reserves-seed-state-v2" &&
         seed_result["counted_run"] == false
       raise VerifiedStateSnapshotError, "invalid complete reserves seed result" unless valid
       reject_sensitive!(seed_result)
@@ -187,13 +191,17 @@ module XrplReserveStudy
     end
 
     def validate_snapshot_record!(snapshot)
-      valid = snapshot.is_a?(Hash) && snapshot.keys.sort == (IDENTITY_KEYS + %w[schema_version ledger files path]).sort &&
+      valid = snapshot.is_a?(Hash) && snapshot.keys.sort == (IDENTITY_KEYS + %w[schema_version ledger files path directory_binding]).sort &&
         snapshot["schema_version"] == "verified-state-snapshot-v1" && snapshot["path"].is_a?(String) &&
         snapshot["path"] == File.join(snapshot_root, snapshot["snapshot_id"])
       raise VerifiedStateSnapshotError, "invalid verified snapshot record" unless valid
       validate_identity!(snapshot.slice(*IDENTITY_KEYS))
       validate_ledger!(snapshot["ledger"])
       validate_manifest!(snapshot["files"])
+      validate_directory_binding!(snapshot["directory_binding"])
+      unless directory_binding!(snapshot.fetch("path")) == snapshot.fetch("directory_binding")
+        raise VerifiedStateSnapshotError, "snapshot root or ancestor is not the published directory"
+      end
       reject_sensitive!(snapshot.reject { |key, _| key == "path" })
       snapshot
     end
@@ -205,7 +213,7 @@ module XrplReserveStudy
     end
 
     def public_record(record, path)
-      record.merge("path" => path).freeze
+      record.merge("path" => path, "directory_binding" => directory_binding!(path)).freeze
     end
 
     def snapshot_root
@@ -250,13 +258,20 @@ module XrplReserveStudy
     end
 
     def reject_state_name!(name)
-      raise VerifiedStateSnapshotError, "runtime state contains prohibited local identity" unless safe_relative?(name) && !name.match?(FORBIDDEN_KEY)
+      raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless safe_relative?(name)
+      raise VerifiedStateSnapshotError, "runtime state contains prohibited local identity" if name.match?(LOCAL_IDENTITY)
     end
 
     def reject_state_content!(path)
       bytes = File.binread(path)
-      return unless bytes.force_encoding(Encoding::UTF_8).valid_encoding?
-      raise VerifiedStateSnapshotError, "runtime state contains prohibited local identity" if bytes.match?(FORBIDDEN_TEXT)
+      decoded_text_variants(bytes).each do |encoding, text|
+        next unless printable_text?(text)
+        if encoding == Encoding::UTF_8 && text.match?(LOCAL_IDENTITY)
+          raise VerifiedStateSnapshotError, "runtime state contains prohibited local identity"
+        end
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless text.match?(SAFE_OPAQUE_TEXT)
+        raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if text.match?(LOCAL_IDENTITY)
+      end
     end
 
     def reject_sensitive!(value)
@@ -282,6 +297,46 @@ module XrplReserveStudy
 
     def sha?(value)
       value.is_a?(String) && value.match?(/\A[a-f0-9]{64}\z/)
+    end
+
+    def directory_binding!(path)
+      binding = []
+      current = path
+      loop do
+        stat = File.lstat(current)
+        raise VerifiedStateSnapshotError, "snapshot root or ancestor is not the published directory" unless stat.directory?
+        binding << [stat.dev, stat.ino]
+        break if current == @runtime_root
+        parent = File.dirname(current)
+        raise VerifiedStateSnapshotError, "snapshot root or ancestor is not the published directory" if parent == current
+        current = parent
+      end
+      binding.freeze
+    rescue Errno::ENOENT, Errno::ELOOP
+      raise VerifiedStateSnapshotError, "snapshot root or ancestor is not the published directory"
+    end
+
+    def validate_directory_binding!(value)
+      valid = value.is_a?(Array) && value.length == ROOT_COMPONENTS.length + 2 &&
+        value.all? { |entry| entry.is_a?(Array) && entry.length == 2 && entry.all? { |number| number.is_a?(Integer) && number >= 0 } }
+      raise VerifiedStateSnapshotError, "invalid snapshot directory binding" unless valid
+    end
+
+    def decoded_text_variants(bytes)
+      variants = []
+      utf8 = bytes.dup.force_encoding(Encoding::UTF_8)
+      variants << [Encoding::UTF_8, utf8] if utf8.valid_encoding?
+      [Encoding::UTF_16LE, Encoding::UTF_16BE].each do |encoding|
+        decoded = bytes.dup.force_encoding(encoding).encode(Encoding::UTF_8)
+        variants << [encoding, decoded] if decoded.valid_encoding?
+      rescue Encoding::InvalidByteSequenceError, Encoding::UndefinedConversionError
+        nil
+      end
+      variants
+    end
+
+    def printable_text?(value)
+      value.each_codepoint.all? { |codepoint| codepoint == 9 || codepoint == 10 || codepoint == 13 || (32..126).cover?(codepoint) }
     end
   end
 end

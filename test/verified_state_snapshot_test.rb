@@ -113,6 +113,35 @@ class VerifiedStateSnapshotTest < Minitest::Test
     FileUtils.rm_rf(outside) if outside
   end
 
+  # Break caught: verify! followed a snapshot-root symlink to a replacement image with matching bytes.
+  def test_rejects_snapshot_root_symlink_substitution
+    snapshot = @publisher.publish(identity: identity, seed_result: seed_result)
+    replacement = File.join(@runtime_root, "replacement-image")
+    File.rename(snapshot.fetch("path"), replacement)
+    FileUtils.ln_s(replacement, snapshot.fetch("path"))
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) { @publisher.verify!(snapshot) }
+    assert_equal "snapshot root or ancestor is not the published directory", error.message
+  end
+
+  # Break caught: machine identity in a UTF-16 runtime file bypassed the old UTF-8 denylist.
+  def test_rejects_machine_identity_in_alternate_encoding
+    File.binwrite(File.join(@state, "runtime.dat"), "machine_id=operator-7".encode("UTF-16LE"))
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: arbitrary metadata fields could carry an operator or machine identity into snapshot admission.
+  def test_rejects_unapproved_seed_metadata_keys
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result.merge("machine_id" => "operator-7"))
+    end
+    assert_equal "invalid complete reserves seed result", error.message
+  end
+
   private
 
   def identity
