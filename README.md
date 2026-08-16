@@ -9,6 +9,8 @@ The project separates four kinds of evidence:
 3. ecosystem and economic impact modelling; and
 4. a decision brief that states whether the evidence supports a change.
 
+## Reserves as economic anti-spam and state-growth controls
+
 XRPL reserves are economic controls on durable ledger-state growth and abuse:
 the base reserve prices creation of an `AccountRoot`, while the owner reserve
 prices the trust lines, offers, escrows, NFTs, AMMs, and other objects an account

@@ -23,6 +23,18 @@ Pull requests should be small enough to review, contain tests for changed behavi
 
 ## Complete-reserves distribution contributions
 
+### Reserves as economic anti-spam and state-growth controls
+
+Reserve calibration is also a security and state-growth study. The base reserve
+raises the cost of creating `AccountRoot` state; the owner reserve raises the
+cost of retaining trust lines, offers, escrows, NFTs, AMMs, and other ledger
+objects. Contributions must therefore preserve separate base-only, owner-only,
+and combined scenarios, and must report account-burst, object-burst, mixed,
+churn, and recovery behavior together with ledger/database growth, CPU, memory,
+disk/I/O, close-time, finality, transaction outcomes, reset, and recovery.
+These measurements inform anti-spam trade-offs but do not by themselves prove
+network security or justify a reserve-policy change.
+
 The current evidence prerequisite is a frozen current-state distribution for
 one validated ledger. One declared operator may create an `operator_local`
 bundle and use it for a reproducible local study. A matching report from
