@@ -69,6 +69,38 @@ Do not commit generated `capacity/runtime/` or `evidence/generated/` content.
 Proposed public evidence must be sanitized, checksummed, source-commit-bound,
 and reviewed separately from the code that produced it.
 
+## Required staged operator contribution sequence
+
+Operator integrations and evidence contributions must identify which gate they
+satisfy and proceed in this order:
+
+1. Produce a hash-bound, exact-ledger distribution containing the AccountRoot
+   total and owner-object totals by class. This is read-only work against the
+   operator's own indexed Clio, `rippled`, database, or HTTPS source.
+2. Integrate an operator-supplied isolated XRPL runtime adapter and run the
+   non-counted 10k, 25k, and 50k calibration checkpoints. Cover base reserve,
+   owner reserve, and combined pressure through the baseline, account-burst,
+   object-burst, mixed, churn, and recovery workloads, including reset and
+   artifact checks.
+3. Record the 1m checkpoint as either `measured`, bound to its observed
+   artifact, or `not_measured` with a permitted reason. Do not substitute a
+   projection or omit the disposition.
+4. Review measured provisioning and resource requirements, verified
+   snapshot/one-use-clone behavior, all security gates, reset/recovery, and
+   checksummed artifact publication. A failed or incomplete gate must remain a
+   failed, incomplete, or not-measured result.
+5. Only after those gates pass may maintainers consider a separate proposal to
+   authorize the frozen 120-run full profile. The current executor rejects that
+   profile, the matrix remains hard-disabled and `authorized: false`, and no
+   earlier contribution enables or authorizes it.
+
+All transaction-capable steps are isolated-private-network-only. Never submit
+reserve-study transactions to Mainnet, Testnet, Devnet, or a public endpoint.
+The repository does not bundle a live operator runtime adapter, no counted
+complete-reserves evidence has been collected, and no reserve-policy change is
+recommended. Planning output, a successful small calibration, and future full
+authorization are separate states and must be described separately.
+
 ## Security
 
 Do not open a public issue for a vulnerability. Follow [SECURITY.md](SECURITY.md).
