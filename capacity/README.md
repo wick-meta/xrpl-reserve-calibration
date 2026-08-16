@@ -1,5 +1,12 @@
 # Capacity harness
 
+This directory documents the earlier base-reserve standalone harness and its
+reviewed small non-counted pilot. For the separate account-plus-owner
+complete-reserves implementation, use the
+[complete-reserves operator runbook](../docs/complete-reserves-operator-runbook.md).
+The complete-reserves calibrated executor remains an integration library, and
+the full 120-run profile remains disabled and unauthorized.
+
 Status: reviewed native non-counted pilot completed; not approved for counted runs.
 
 The harness runs `rippled` 3.3.0 in standalone mode from immutable image digest `sha256:353d5e016bb93519e9fcac715cdc8c2205b96c4cfe2d1f0f1d22a22f6efaff70`.

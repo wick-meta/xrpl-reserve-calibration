@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:complete-reserves-security-evaluation-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "workload_id", "profile_id", "profile_sha256",
+    "distribution_sha256", "candidate_sha256", "security_config_sha256",
+    "attempted_transactions", "validated_transactions", "transaction_ceiling",
+    "baseline_artifact_sha256", "observed_artifact_sha256", "gate_results",
+    "passed_gates", "failed_gates", "passed", "network_scope", "counted_run",
+    "execution_authorized", "security_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "complete-reserves-security-evaluation-v1"},
+    "workload_id": {"enum": ["account-burst", "object-burst", "mixed", "churn", "recovery"]},
+    "profile_id": {"enum": ["complete-reserves-calibrated-v1", "complete-reserves-full-matrix-v1"]},
+    "profile_sha256": {"$ref": "#/$defs/sha256"},
+    "distribution_sha256": {"$ref": "#/$defs/sha256"},
+    "candidate_sha256": {"$ref": "#/$defs/sha256"},
+    "security_config_sha256": {"$ref": "#/$defs/sha256"},
+    "attempted_transactions": {"type": "integer", "minimum": 1},
+    "validated_transactions": {"type": "integer", "minimum": 0},
+    "transaction_ceiling": {"type": "integer", "minimum": 1},
+    "baseline_artifact_sha256": {"$ref": "#/$defs/sha256"},
+    "observed_artifact_sha256": {"$ref": "#/$defs/sha256"},
+    "gate_results": {"type": "object"},
+    "passed_gates": {"type": "array", "items": {"type": "string"}},
+    "failed_gates": {"type": "array", "items": {"type": "string"}},
+    "passed": {"type": "boolean"},
+    "network_scope": {"const": "isolated-network-only"},
+    "counted_run": {"const": false},
+    "execution_authorized": {"const": false},
+    "security_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:verified-state-snapshot-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "snapshot_id", "candidate_image_digest", "study_sha256",
+    "distribution_sha256", "config_sha256", "source_sha256", "ledger", "files",
+    "path", "directory_binding"
+  ],
+  "properties": {
+    "schema_version": {"const": "verified-state-snapshot-v1"},
+    "snapshot_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "candidate_image_digest": {"$ref": "#/$defs/sha256"},
+    "study_sha256": {"$ref": "#/$defs/sha256"},
+    "distribution_sha256": {"$ref": "#/$defs/sha256"},
+    "config_sha256": {"$ref": "#/$defs/sha256"},
+    "source_sha256": {"$ref": "#/$defs/sha256"},
+    "ledger": {"type": "object"},
+    "files": {"type": "array", "items": {"type": "object"}},
+    "path": {"type": "string", "minLength": 1},
+    "directory_binding": {"type": "object"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:complete-reserves-profile-schedule-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "profile_id", "profile_sha256", "distribution_sha256",
+    "candidate_sha256", "security_config_sha256", "benchmark_sha256",
+    "timed_floor_seconds", "provisioning_time_status", "completion_seconds",
+    "planning_checkpoints", "one_million_checkpoint", "resource_requirements",
+    "pending_count", "resumed_count", "network_scope", "counted_run",
+    "execution_authorized", "items", "schedule_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "complete-reserves-profile-schedule-v1"},
+    "profile_id": {"const": "complete-reserves-full-matrix-v1"},
+    "profile_sha256": {"$ref": "#/$defs/sha256"},
+    "distribution_sha256": {"$ref": "#/$defs/sha256"},
+    "candidate_sha256": {"$ref": "#/$defs/sha256"},
+    "security_config_sha256": {"$ref": "#/$defs/sha256"},
+    "benchmark_sha256": {"$ref": "#/$defs/sha256"},
+    "timed_floor_seconds": {"const": 252000},
+    "provisioning_time_status": {"const": "unbounded"},
+    "completion_seconds": {"const": null},
+    "planning_checkpoints": {"type": "array", "items": {"type": "object"}},
+    "one_million_checkpoint": {"type": "object"},
+    "resource_requirements": {"type": "object"},
+    "pending_count": {"type": "integer", "minimum": 0},
+    "resumed_count": {"type": "integer", "minimum": 0},
+    "network_scope": {"const": "isolated-network-only"},
+    "counted_run": {"const": false},
+    "execution_authorized": {"const": false},
+    "items": {"type": "array", "items": {"type": "object"}},
+    "schedule_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

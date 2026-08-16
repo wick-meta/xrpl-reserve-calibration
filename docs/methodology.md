@@ -27,6 +27,41 @@ must report the distribution evidence tier and snapshot construction
 calibration separately from capacity evidence, and must never pool results
 across environments.
 
+### Execution readiness and staged enablement
+
+The 120-run matrix has a fixed serial timed minimum of 70 hours: each run has
+a five-minute warmup and a thirty-minute measurement window. That minimum does
+not include population construction, snapshot/clone validation, controlled
+recovery, or a separately approved rerun. Provisioning remains explicitly
+unbounded until it is measured in an isolated non-counted calibration.
+
+The implementation now contains deterministic builders for AccountRoots and
+all 20 classified owner-object types, actual stopped-state snapshots, one-use
+clones, a measured-only benchmark and scheduler, security workloads, and a
+guarded three-cell calibration executor library. Those components have
+fake-runtime and bounded state-image test evidence. They are not a bundled live
+runtime adapter, an operator execution CLI, or capacity evidence.
+
+The full matrix remains a frozen, hard-disabled design. Authorization stays
+false until the operator integration demonstrates all of the following at a
+realistic, explicitly non-counted scope:
+
+1. deterministic construction of AccountRoots and each supported owner-object
+   family;
+2. verified, equivalent fresh state for every repeated run, without direct
+   database injection;
+3. bounded disk, memory, CPU, I/O, transaction, and retry behavior;
+4. controlled reset and recovery; and
+5. complete, sanitized, integrity-bound result artifacts;
+6. observed 10k, 25k, and 50k provisioning samples; and
+7. an explicit measured/not-measured disposition for the 1m checkpoint.
+
+This is an operator and evidence-quality safeguard, not a Mainnet safeguard.
+All transaction-capable capacity work is restricted to an isolated private
+network. Without live measured provisioning and clone behavior, a large run could
+exhaust local resources or compare non-equivalent states, neither of which is
+valid reserve-policy evidence.
+
 The earlier version-1 base-reserve matrix remains preserved as historical,
 base-only work. Its 72-run shape and non-counted pilot do not replace the
 frozen owner-object distribution, the 120-run complete-reserves matrix, or
@@ -88,7 +123,11 @@ Primary measurements are ledger growth, database growth, resident memory, CPU ut
 
 The original `3.1.3` preregistration remains byte-for-byte unchanged. Before pilot or counted data, a prospective candidate-specific amendment selected XRPLF `3.3.0` as the sole execution target. Material changes between those releases are candidate-specific factors, not implementation-equivalence evidence. Results cannot be pooled with or generalized to `3.1.3`. The source pins are the official [`3.1.3` release](https://github.com/XRPLF/rippled/releases/tag/3.1.3) at immutable [commit `46b241ace8b30d9c9775d60ffba7d24b21903896`](https://github.com/XRPLF/rippled/commit/46b241ace8b30d9c9775d60ffba7d24b21903896) and the official [`3.3.0` release](https://github.com/XRPLF/rippled/releases/tag/3.3.0) at immutable [commit `00a178fb92ca49521b937ae1a99d863765ea8a90`](https://github.com/XRPLF/rippled/commit/00a178fb92ca49521b937ae1a99d863765ea8a90).
 
-The alignment resolves only the reference gate. It does not validate live metrics, complete a pilot, establish native execution, authorize counted execution, merge, release, deploy, or produce results. Pilot validation and native execution remain prerequisites; the matrix, three repetitions per cell, seed, metrics, thresholds, abort rules, and disposition policy are unchanged.
+The alignment resolved only the historical reference gate. The later reviewed
+native pilot is separate, candidate-specific, non-counted evidence; neither
+artifact authorizes counted execution or replaces the complete-reserves
+distribution, calibration, 120-run matrix, repetitions, thresholds, abort
+rules, or disposition policy.
 
 The non-counted pilot protocol is frozen separately in `capacity/pilot-protocol-v1.yml`. It uses only the representative planned run `r0500000-a000010000-n01`, exactly three deterministic keyless destinations, 300 seconds of warmup, and 900 measurement steps at an absolute monotonic target cadence of 2.0 seconds. A target may be observed at most 1.0 second late. Consecutive observed ledger-advancement completions must remain within 1.0 through 3.0 seconds. Transaction ordinals 1, 2, and 3 occur at measurement sequences 1, 450, and 900. A scheduled step signs and submits exactly one `Payment` before its target, then advances exactly one standalone ledger; an unscheduled step advances one standalone ledger without a transaction. Missing the start or completion window aborts before any later catch-up advancement. Each sample is captured after its advancement and binds to an exact validated ledger index and hash. One post-warmup sample plus 900 measurement samples produces exactly 901 ordered samples. The timing allowance was prospectively amended before a successful pilot because the isolated transport's measured ledger-advance boundary exceeds 0.25 seconds; all earlier failed pilot attempts are invalidated and are not evidence.
 

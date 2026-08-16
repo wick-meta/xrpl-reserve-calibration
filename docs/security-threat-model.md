@@ -2,7 +2,14 @@
 
 XRPL Reserve Calibration is a local research toolkit that captures read-only public-ledger observations, generates deterministic experimental inputs, operates a disposable standalone `xrpld` environment, and publishes reproducible evidence for reserve-policy analysis. It is not a wallet, public service, validator operator, governance automation system, or production transaction client.
 
-The primary runtime surfaces are `bin/reserve-study`, the Ruby library under `lib/xrpl_reserve_study`, `bin/capacity-harness`, and `capacity/compose.yml`. The repository also contains schemas, preregistered study inputs, evidence, CI, and contributor documentation. Capacity execution is security-sensitive because it introduces signing and submission, even though the only authorized destination is a checkout-scoped standalone network.
+The primary runtime surfaces are `bin/reserve-study`, the Ruby library under
+`lib/xrpl_reserve_study`, `bin/capacity-harness`, and the isolated Compose
+configurations. Complete-reserves adds a concrete loopback HTTPS/mTLS channel,
+ephemeral signer pool, state-image snapshot and one-use clone boundary,
+measured scheduler, guarded calibration executor, and checksummed planning and
+execution bundles. Capacity execution is security-sensitive because it
+introduces signing and submission, even though the only allowed destination is
+a pinned isolated network.
 
 Security objectives are to prevent any transaction from reaching Mainnet, Testnet, Devnet, or an operator-selected endpoint; prevent signing material from entering source control, command arguments, environment variables, logs, artifacts, exceptions, process listings, or Docker metadata; preserve immutable study/config/workload provenance; constrain destructive cleanup to the checkout-specific Docker project; and ensure preliminary transaction acceptance is never reported as validated success.
 
@@ -13,7 +20,8 @@ Security objectives are to prevent any transaction from reaching Mainnet, Testne
 - Operator signing material, including any standalone-genesis secret supplied at runtime.
 - The host Docker daemon and the ability to create, inspect, stop, and delete checkout-scoped resources.
 - The invariant that public-network observation remains read-only.
-- The invariant that transaction-capable code can target only the fixed internal standalone node on network ID 21338.
+- The invariant that transaction-capable code can target only a fixed,
+  identity-verified isolated network and never an operator-selected endpoint.
 - Preregistered study inputs, run ordering, candidate configuration, generated workloads, recorded outcomes, checksums, and lifecycle labels.
 - Host filesystem integrity outside ignored `capacity/runtime/`.
 - Public-repository integrity: no secrets, private infrastructure identifiers, personal paths, or misleading readiness claims.
@@ -33,6 +41,14 @@ Security objectives are to prevent any transaction from reaching Mainnet, Testne
 6. **Host process to isolated container:** signing requests cross this boundary only through standard input to a fixed checkout-scoped container and its loopback admin RPC. Secrets must not cross through argv, environment, files, Compose interpolation, or persistent output.
 7. **Open ledger to validated ledger:** a successful submission response is preliminary. Only a deterministic `ledger_accept` followed by validated transaction and AccountRoot queries can establish final outcomes.
 8. **Runtime output to public evidence:** runtime records are not evidence merely because they exist. Publication requires schema/provenance checks and an explicit later lifecycle gate.
+9. **State image to run clone:** a snapshot is trusted only after a clean stop,
+   manifest verification, read-only restart at the same ledger identity, and
+   exact candidate/study/distribution/config/source binding. Every clone is
+   bound to one run and repetition and consumed once.
+10. **Planning bundle to executor:** a self-hashed item is insufficient. It
+    must be an exact member of the reverified `calibration.json` bundle and
+    retain all benchmark, schedule, security, snapshot, ledger, and resource
+    bindings.
 
 ## Assumptions
 
@@ -65,6 +81,12 @@ The read-only public distribution path is separately bounded by endpoint
 response and pagination limits. It must not turn an unavailable public gateway
 into unbounded retries or an indefinite workstation job. Indexed aggregate
 reports are preferred when a full-tree public-RPC read has no bounded duration.
+
+The full 120-run profile has a 70-hour timed floor before provisioning. Because
+provisioning is unbounded until observed calibration samples exist, the full
+profile remains rejected by the guarded executor. The measured scheduler
+rejects inadequate CPU, memory, disk, or I/O declarations; planning output is
+not permission to execute.
 
 ## Incorrect finality or evidence claims
 

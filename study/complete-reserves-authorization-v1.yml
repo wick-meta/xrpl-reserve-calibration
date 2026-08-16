@@ -2,4 +2,4 @@ schema_version: complete-reserves-authorization-v1
 authorized: false
 authorization_scope: implementation-phase-only
 # A documented review may be self-review or independent review; label it accurately.
-reason: frozen-until-candidate-distribution-snapshot-and-documented-review
+reason: frozen-until-operator-distribution-live-calibration-and-separate-review

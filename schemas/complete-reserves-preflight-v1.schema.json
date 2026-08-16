@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xrpl-reserve-calibration:complete-reserves-preflight-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "profile", "profile_id", "profile_sha256",
+    "security_config_sha256", "network_scope", "cell_count",
+    "timed_floor_seconds", "provisioning_time_status", "executor_available",
+    "counted_run", "execution_authorized"
+  ],
+  "properties": {
+    "schema_version": {"const": "complete-reserves-preflight-v1"},
+    "profile": {"enum": ["calibrated-v1", "full-v1"]},
+    "profile_id": {"enum": ["complete-reserves-calibrated-v1", "complete-reserves-full-matrix-v1"]},
+    "profile_sha256": {"$ref": "#/$defs/sha256"},
+    "security_config_sha256": {"$ref": "#/$defs/sha256"},
+    "network_scope": {"const": "isolated-network-only"},
+    "cell_count": {"enum": [3, 120]},
+    "timed_floor_seconds": {"enum": [6300, 252000]},
+    "provisioning_time_status": {"const": "unbounded"},
+    "executor_available": {"type": "boolean"},
+    "counted_run": {"const": false},
+    "execution_authorized": {"const": false}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

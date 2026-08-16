@@ -19,7 +19,14 @@ addresses, and credentials remain outside the repository and generated bundle.
 
 ## Capacity experiments
 
-Capacity work must use disposable, isolated networks with no route to production credentials. Runtime containment enforces resource ceilings and an explicit network identity check. Deterministic workload preparation creates keyless synthetic AccountIDs, not key pairs: no seed, private key, public key, or signing capability is generated or stored. The derivation uses only the SHA-256-locked study and exact planned run, excludes XRPL's reserved zero and one AccountIDs, and produces reproducible public addresses.
+Capacity work must use disposable, isolated networks with no route to production credentials. Runtime containment enforces resource ceilings and an explicit network identity check. The earlier base-reserve workload preparation creates keyless synthetic AccountIDs. Complete-reserves population construction instead uses an ephemeral deterministic signer pool because AccountRoots and owner objects must be created through validated transactions. Those signer values exist only in mutable process memory, are wiped after each use, and cross only the verified loopback HTTPS/mTLS private-network channel; they are never committed or published.
+
+Complete-reserves execution additionally requires exact membership in a
+checksummed calibration plan, a private-network identity bound to the pinned
+candidate, an exact-ledger verified snapshot, a run-and-repetition-bound
+one-use clone, declared transaction/deadline ceilings, and the fixed security
+workloads. Public, missing, stale, counted, full-profile, or self-invented items
+are rejected before signing authority is read.
 
 Metrics and manifests are local, immutable-after-publication runtime outputs and are ignored by version control. A manifest binds locked configuration and workload hashes, source commit, candidate runtime, normalized environment fields, the metric-protocol document and schema hashes, thresholds, abort rules, and the immutable prospective alignment record. The normalized environment is limited to Docker server version, host architecture and operating-system class, logical CPUs, memory bytes, candidate image digest and architecture, and native-architecture eligibility; it must not contain a hostname, username, filesystem path, address, or signing material.
 
@@ -33,7 +40,12 @@ The artifact schemas are closed: unknown signing, private, host, path, or locati
 
 Freezing these contracts performs no transaction and starts no candidate. The guarded pilot mechanism now implements protected standard-input authority handling, bounded execution, identity-preserving restart, exactly one confirmed reset attempt after any start attempt, post-reset binding revalidation, and durable atomic local publication. Its tests use fake boundaries and do not constitute execution evidence.
 
-No pilot or live metric evidence exists. Implemented preparation, fake-boundary verification, functional smoke, manifest creation, guarded pilot orchestration, pilot completion, counted authorization, counted execution, second-environment replication, final review, PR state, merge, release, deployment, and production are distinct states. None is evidence for another.
+The earlier pinned 3.3.0 non-counted pilot has reviewed isolated evidence. No
+live complete-reserves calibration, measured provisioning bundle, full-matrix
+run, or counted complete-reserves evidence exists. Implemented preparation,
+fake-boundary verification, pilot completion, calibration, counted
+authorization, counted execution, replication, final review, release, and
+deployment are distinct states. None is evidence for another.
 
 Generated workload records are unsigned intents and are always marked `counted_run: false`. Syntactic address acceptance does not establish that an AccountRoot exists. Generation does not sign, submit, advance a ledger, complete a pilot, or produce capacity evidence. The generator never reads or writes the standalone genesis secret documented by [XRPL's standalone-genesis procedure](https://xrpl.org/docs/infrastructure/testing-and-auditing/start-a-new-genesis-ledger-in-stand-alone-mode). Its public address encoding follows `tokens.cpp` at immutable release commit [`00a178fb92ca49521b937ae1a99d863765ea8a90`](https://github.com/XRPLF/rippled/blob/00a178fb92ca49521b937ae1a99d863765ea8a90/src/libxrpl/protocol/tokens.cpp), resolved from the signed `3.3.0` release tag.
 
@@ -41,7 +53,12 @@ The separate `capacity-functional-smoke` mechanism may sign, submit, and validat
 
 ## Secrets and privacy
 
-The generator requires no secret. The guarded functional smoke requires a separately supplied authority only at live execution time; this repository contains none. `.env` files and generated runtime output are ignored by default. Evidence intended for publication must be reviewed for hostnames, usernames, paths, tokens, IP addresses, and other identifying data.
+The base-workload generator requires no secret. Transaction-capable functional
+smoke, pilot, and complete-reserves calibration paths require separately
+supplied isolated-network authority only at live execution time; this
+repository contains none. `.env` files and generated runtime output are ignored
+by default. Evidence intended for publication must be reviewed for hostnames,
+usernames, paths, tokens, IP addresses, and other identifying data.
 
 ## Non-goals
 

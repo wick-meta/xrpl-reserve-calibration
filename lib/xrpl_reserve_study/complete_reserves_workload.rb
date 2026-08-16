@@ -20,7 +20,7 @@ module XrplReserveStudy
       distribution_hash = canonical_hash(distribution)
       allocations = allocation(distribution.fetch("class_counts"), canonical_run.fetch("scale"))
       accounts = (1..canonical_run.fetch("account_root_target")).map { |ordinal| account_record(canonical_run, distribution_hash, ordinal) }
-      objects = allocations.flat_map { |klass, count| (1..count).map { |ordinal| object_record(canonical_run, distribution_hash, klass, ordinal) } }
+      objects = allocations.flat_map { |klass, count| (1..count).map { |ordinal| object_record(canonical_run, distribution_hash, klass, ordinal, accounts.length) } }
       sums = @publisher.publish(output_dir) do |staging|
         write_jsonl(staging, "accounts.jsonl", accounts)
         write_jsonl(staging, "objects.jsonl", objects)
@@ -69,8 +69,10 @@ module XrplReserveStudy
       { "ordinal" => ordinal, "account_id" => identity(run, distribution_hash, "account_root", ordinal) }
     end
 
-    def object_record(run, distribution_hash, klass, ordinal)
-      { "object_type" => klass, "ordinal" => ordinal, "owner" => identity(run, distribution_hash, klass, ordinal) }
+    def object_record(run, distribution_hash, klass, ordinal, account_count)
+      owner = identity(run, distribution_hash, klass, ordinal)
+      { "object_type" => klass, "ordinal" => ordinal, "owner" => owner,
+        "controller_ordinal" => (Digest::SHA256.hexdigest(owner)[0, 16].to_i(16) % account_count) + 1 }
     end
 
     def identity(run, distribution_hash, klass, ordinal)
