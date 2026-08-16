@@ -14,9 +14,11 @@ module XrplReserveStudy
     EXECUTION_SECURITY_WORKLOADS = EXECUTION_WORKLOADS.drop(1).freeze
     EXECUTION_HASH_BINDINGS = %w[
       profile_sha256 schedule_sha256 schedule_item_sha256 security_config_sha256
+      benchmark_sha256 planning_security_sha256 planning_bindings_sha256
       distribution_sha256 candidate_sha256
     ].freeze
     EXECUTION_FILES = %w[bindings.json metrics.json result.json resume.json security.json].freeze
+    PLANNING_FILES = %w[benchmark.json bindings.json schedule.json security.json].freeze
 
     def initialize
       @publisher = RuntimePublisher.new(error_class: CompleteReservesArtifactsError, failure_label: "complete reserves disposition")
@@ -33,20 +35,7 @@ module XrplReserveStudy
 
     def publish_planning_bundle(benchmark:, schedule:, security:)
       validate_planning!(benchmark, schedule, security)
-      bindings = {
-        "schema_version" => "complete-reserves-planning-bindings-v1",
-        "profile_id" => benchmark.fetch("profile_id"),
-        "profile_sha256" => benchmark.fetch("profile_sha256"),
-        "distribution_sha256" => benchmark.fetch("distribution_sha256"),
-        "candidate_sha256" => benchmark.fetch("candidate_sha256"),
-        "security_config_sha256" => security.fetch("security_config_sha256"),
-        "benchmark_sha256" => benchmark.fetch("benchmark_sha256"),
-        "schedule_sha256" => schedule.fetch("schedule_sha256"),
-        "security_sha256" => security.fetch("security_sha256"),
-        "network_scope" => PLANNING_NETWORK_SCOPE,
-        "counted_run" => false,
-        "execution_authorized" => false
-      }
+      bindings = planning_bindings(benchmark, schedule, security)
       records = {
         "benchmark.json" => JSON.pretty_generate(benchmark) + "\n",
         "bindings.json" => JSON.pretty_generate(bindings) + "\n",
@@ -64,6 +53,30 @@ module XrplReserveStudy
         "artifact_sha256" => sums.freeze
       }.freeze
     rescue KeyError, TypeError, SecurityWorkloadError
+      raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle"
+    end
+
+    def verify_planning_bundle(schedule_sha256:)
+      unless sha?(schedule_sha256)
+        raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle"
+      end
+      output = File.join(RuntimePublisher::RUNTIME_ROOT, "complete-reserves", "planning", schedule_sha256)
+      records = PLANNING_FILES.to_h { |name| [name, read_regular_file!(output, name, "planning")] }
+      verify_sums!(output, records, "planning")
+      benchmark = JSON.parse(records.fetch("benchmark.json"))
+      bindings = JSON.parse(records.fetch("bindings.json"))
+      schedule = JSON.parse(records.fetch("schedule.json"))
+      security = JSON.parse(records.fetch("security.json"))
+      validate_planning!(benchmark, schedule, security)
+      valid = schedule.fetch("schedule_sha256") == schedule_sha256 &&
+        bindings == planning_bindings(benchmark, schedule, security)
+      raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle" unless valid
+      {
+        "benchmark" => deep_freeze(benchmark), "bindings" => deep_freeze(bindings),
+        "schedule" => deep_freeze(schedule), "security" => deep_freeze(security),
+        "artifact_sha256" => records.transform_values { |bytes| Digest::SHA256.hexdigest(bytes) }.freeze
+      }.freeze
+    rescue SystemCallError, JSON::ParserError, KeyError, TypeError
       raise CompleteReservesArtifactsError, "invalid complete reserves planning bundle"
     end
 
@@ -113,6 +126,43 @@ module XrplReserveStudy
     end
 
     private
+
+    def planning_bindings(benchmark, schedule, security)
+      {
+        "schema_version" => "complete-reserves-planning-bindings-v1",
+        "profile_id" => benchmark.fetch("profile_id"),
+        "profile_sha256" => benchmark.fetch("profile_sha256"),
+        "distribution_sha256" => benchmark.fetch("distribution_sha256"),
+        "candidate_sha256" => benchmark.fetch("candidate_sha256"),
+        "security_config_sha256" => security.fetch("security_config_sha256"),
+        "benchmark_sha256" => benchmark.fetch("benchmark_sha256"),
+        "schedule_sha256" => schedule.fetch("schedule_sha256"),
+        "security_sha256" => security.fetch("security_sha256"),
+        "network_scope" => PLANNING_NETWORK_SCOPE,
+        "counted_run" => false,
+        "execution_authorized" => false
+      }
+    end
+
+    def read_regular_file!(output, name, label)
+      path = File.join(output, name)
+      raise CompleteReservesArtifactsError, "invalid complete reserves #{label} bundle" unless File.file?(path) && !File.symlink?(path)
+      File.binread(path)
+    end
+
+    def verify_sums!(output, records, label)
+      sums = read_regular_file!(output, "SHA256SUMS", label)
+      expected = records.keys.sort.map { |name| "#{Digest::SHA256.hexdigest(records.fetch(name))}  #{name}\n" }.join
+      raise CompleteReservesArtifactsError, "invalid complete reserves #{label} bundle" unless sums == expected
+    end
+
+    def deep_freeze(value)
+      case value
+      when Hash then value.each { |key, nested| deep_freeze(key); deep_freeze(nested) }
+      when Array then value.each { |nested| deep_freeze(nested) }
+      end
+      value.freeze
+    end
 
     def validate_execution!(result, metrics, security_evaluations, resume_record)
       valid = result.is_a?(Hash) && result["schema_version"] == "complete-reserves-execution-result-v1" &&

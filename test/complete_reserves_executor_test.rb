@@ -1,16 +1,18 @@
 # frozen_string_literal: true
 
 require "digest"
+require "fileutils"
 require "json"
 require "minitest/autorun"
 require_relative "../lib/xrpl_reserve_study"
+require_relative "complete_reserves_planning_fixture"
 
 class CompleteReservesExecutorTest < Minitest::Test
+  include CompleteReservesPlanningFixture
   PROFILE_PATH = File.expand_path("../study/complete-reserves-profiles-v1.yml", __dir__)
   PROFILE_SHA256 = Digest::SHA256.file(PROFILE_PATH).hexdigest
   DISTRIBUTION_SHA256 = "d" * 64
   CANDIDATE_SHA256 = "c" * 64
-  SCHEDULE_SHA256 = "b" * 64
 
   class FakeCloneManager
     attr_reader :events
@@ -138,25 +140,27 @@ class CompleteReservesExecutorTest < Minitest::Test
     end
   end
 
-  class DisabledAuthorization
-    attr_reader :calls
-
-    def initialize
-      @calls = 0
-    end
-
-    def authorize!
-      @calls += 1
-      raise XrplReserveStudy::CompleteReservesAuthorizationError, "complete reserves execution remains disabled"
-    end
+  class SuccessfulAuthorization
+    def authorize!; true; end
   end
 
   def setup
     @security = XrplReserveStudy::SecurityWorkload.new
+    @planning_artifacts = XrplReserveStudy::CompleteReservesArtifacts.new
+    @estimate = benchmark_estimate
+    @schedule = planning_schedule(@estimate)
+    @planning_security = planning_security
+    @planning_output = File.join(
+      XrplReserveStudy::RuntimePublisher::RUNTIME_ROOT, "complete-reserves", "planning", @schedule.fetch("schedule_sha256")
+    )
+    FileUtils.rm_rf(@planning_output)
+    @published_planning = @planning_artifacts.publish_planning_bundle(
+      benchmark: @estimate, schedule: @schedule, security: @planning_security
+    )
     @item = calibrated_item
     @ledger = {
       "network_id" => "candidate-task6", "ledger_index" => 25, "ledger_hash" => "f" * 64,
-      "account_roots" => 2, "class_counts" => XrplReserveStudy::OwnerObjectRecipeRegistry.new.all.to_h { |recipe| [recipe.kind, 1] }
+      "account_roots" => 10_000, "class_counts" => calibrated_class_counts
     }
     @snapshot = {
       "schema_version" => "verified-state-snapshot-v1", "snapshot_id" => "calibration-base",
@@ -168,7 +172,10 @@ class CompleteReservesExecutorTest < Minitest::Test
     @events = []
     @runtime = FakeRuntime.new(@events, @item, @ledger)
     @artifacts = FakeArtifacts.new(@events)
-    @authorization = DisabledAuthorization.new
+  end
+
+  def teardown
+    FileUtils.rm_rf(@planning_output) if @planning_output
   end
 
   # Break caught: reordering a destructive lifecycle, skipping a security
@@ -188,7 +195,6 @@ class CompleteReservesExecutorTest < Minitest::Test
     assert_equal true, result.fetch("recovery_confirmed")
     assert_match(/\A[0-9a-f]{64}\z/, result.fetch("result_artifact_sha256"))
     assert_empty authority
-    assert_equal 0, @authorization.calls
   end
 
   # Break caught: reading protected authority before rejecting the full profile
@@ -256,7 +262,7 @@ class CompleteReservesExecutorTest < Minitest::Test
       read = false
       guarded = XrplReserveStudy::CompleteReservesExecutor.new(
         snapshot_provider: ->(_item) { snapshot }, clone_manager: FakeCloneManager.new(@events),
-        runtime: @runtime, artifacts: @artifacts, authorization: @authorization,
+        runtime: @runtime, artifacts: @artifacts, planning_artifacts: @planning_artifacts,
         security: @security, recipe_registry: XrplReserveStudy::OwnerObjectRecipeRegistry.new
       )
       assert_raises(XrplReserveStudy::CompleteReservesExecutorError) do
@@ -266,12 +272,56 @@ class CompleteReservesExecutorTest < Minitest::Test
     end
   end
 
+  # Break caught: a caller could invent a calibrated item, self-hash it, and
+  # reach snapshot selection without any published planning-bundle anchor.
+  def test_rejects_arbitrary_self_hashed_calibrated_item_before_snapshot_or_secret
+    forged = Marshal.load(Marshal.dump(@item))
+    forged["run_id"] = "cal-a000011000-o000016500-r01"
+    forged["account_root_target"] = 11_000
+    forged["owned_object_target"] = 16_500
+    forged["schedule_item_sha256"] = canonical_sha256(forged.reject { |key, _| key == "schedule_item_sha256" })
+    selected = read = false
+    guarded = XrplReserveStudy::CompleteReservesExecutor.new(
+      snapshot_provider: ->(_item) { selected = true; @snapshot }, clone_manager: FakeCloneManager.new(@events),
+      runtime: @runtime, artifacts: @artifacts, planning_artifacts: @planning_artifacts,
+      security: @security, recipe_registry: XrplReserveStudy::OwnerObjectRecipeRegistry.new
+    )
+
+    assert_raises(XrplReserveStudy::CompleteReservesExecutorError) do
+      guarded.run(item: forged, secret_reader: -> { read = true; +"must-not-read" })
+    end
+    refute selected
+    refute read
+  end
+
+  # Break caught: a successful injected authorizer could start counted work
+  # while the result and artifact layer still hard-coded disabled flags.
+  def test_rejects_counted_mode_and_authorization_injection_before_secret
+    counted = Marshal.load(Marshal.dump(@item))
+    counted["counted_run"] = true
+    counted["execution_authorized"] = true
+    counted["schedule_item_sha256"] = canonical_sha256(counted.reject { |key, _| key == "schedule_item_sha256" })
+    read = false
+
+    assert_raises(XrplReserveStudy::CompleteReservesExecutorError) do
+      executor.run(item: counted, secret_reader: -> { read = true; +"must-not-read" })
+    end
+    refute read
+    assert_raises(ArgumentError) do
+      XrplReserveStudy::CompleteReservesExecutor.new(
+        snapshot_provider: ->(_item) { @snapshot }, clone_manager: FakeCloneManager.new(@events),
+        runtime: @runtime, artifacts: @artifacts, planning_artifacts: @planning_artifacts,
+        authorization: SuccessfulAuthorization.new, security: @security, recipe_registry: XrplReserveStudy::OwnerObjectRecipeRegistry.new
+      )
+    end
+  end
+
   private
 
   def executor
     XrplReserveStudy::CompleteReservesExecutor.new(
       snapshot_provider: ->(_item) { @snapshot }, clone_manager: FakeCloneManager.new(@events),
-      runtime: @runtime, artifacts: @artifacts, authorization: @authorization,
+      runtime: @runtime, artifacts: @artifacts, planning_artifacts: @planning_artifacts,
       security: @security, recipe_registry: XrplReserveStudy::OwnerObjectRecipeRegistry.new
     )
   end
@@ -279,15 +329,18 @@ class CompleteReservesExecutorTest < Minitest::Test
   def calibrated_item
     data = {
       "schema_version" => "complete-reserves-calibration-item-v1",
-      "run_id" => "cal-a000000002-o000000020-r01", "repetition" => 1,
+      "run_id" => "cal-a000010000-o000015000-r01", "repetition" => 1,
       "profile_id" => "complete-reserves-calibrated-v1", "profile_sha256" => PROFILE_SHA256,
-      "schedule_sha256" => SCHEDULE_SHA256, "security_config_sha256" => @security&.security_config_sha256 || XrplReserveStudy::SecurityWorkload.new.security_config_sha256,
+      "schedule_sha256" => @schedule.fetch("schedule_sha256"), "security_config_sha256" => @security&.security_config_sha256 || XrplReserveStudy::SecurityWorkload.new.security_config_sha256,
+      "benchmark_sha256" => @estimate.fetch("benchmark_sha256"),
+      "planning_security_sha256" => @planning_security.fetch("security_sha256"),
+      "planning_bindings_sha256" => @published_planning.dig("artifact_sha256", "bindings.json"),
       "distribution_sha256" => DISTRIBUTION_SHA256, "candidate_sha256" => CANDIDATE_SHA256,
       "snapshot_id" => "calibration-base", "study_sha256" => "7" * 64,
       "config_sha256" => "6" * 64, "source_sha256" => "5" * 64,
       "ledger_index" => 25, "ledger_hash" => "f" * 64,
-      "network_scope" => "isolated-network-only", "account_root_target" => 2,
-      "owned_object_target" => 20, "base_reserve_drops" => 1_000_000,
+      "network_scope" => "isolated-network-only", "account_root_target" => 10_000,
+      "owned_object_target" => 15_000, "base_reserve_drops" => 1_000_000,
       "owner_reserve_drops" => 200_000, "fee_headroom_drops_per_step" => 20,
       "warmup_seconds" => 300, "measurement_seconds" => 1_800,
       "execution_limits" => { "max_batch_size" => 10, "max_retries" => 0, "deadline_seconds" => 7_200 },
@@ -295,6 +348,52 @@ class CompleteReservesExecutorTest < Minitest::Test
     }
     data["schedule_item_sha256"] = canonical_sha256(data)
     data.freeze
+  end
+
+  def calibrated_class_counts
+    kinds = XrplReserveStudy::OwnerObjectRecipeRegistry.new.all.map(&:kind)
+    quotient, remainder = 15_000.divmod(kinds.length)
+    kinds.each_with_index.to_h { |kind, index| [kind, quotient + (index < remainder ? 1 : 0)] }
+  end
+
+  def planning_schedule(estimate)
+    XrplReserveStudy::ProfileScheduler.new(
+      distribution: DISTRIBUTION, distribution_sha256: DISTRIBUTION_SHA256,
+      candidate_sha256: CANDIDATE_SHA256, profile_path: PROFILE_PATH
+    ).schedule(profile: full_profile, benchmark: estimate, available_resources: available_resources)
+  end
+
+  def available_resources
+    {
+      "logical_cpus" => 8, "memory_bytes" => 64_000_000_000,
+      "free_disk_bytes" => 128_000_000_000,
+      "io_read_bytes_per_second" => 1_000_000_000,
+      "io_write_bytes_per_second" => 1_000_000_000
+    }
+  end
+
+  def planning_security
+    baseline = planning_metric("baseline", attempted: 100, artifact: "1" * 64)
+    observed = planning_metric("mixed", attempted: 500, artifact: "2" * 64)
+    XrplReserveStudy::SecurityWorkload.new.evaluate(baseline: baseline, observed: observed)
+  end
+
+  def planning_metric(workload_id, attempted:, artifact:)
+    {
+      "workload_id" => workload_id, "profile_id" => "complete-reserves-full-matrix-v1",
+      "profile_sha256" => PROFILE_SHA256, "distribution_sha256" => DISTRIBUTION_SHA256,
+      "candidate_sha256" => CANDIDATE_SHA256, "attempted_transactions" => attempted,
+      "validated_transactions" => attempted, "transaction_success_ratio" => 1.0,
+      "ledger_close_seconds_p95" => workload_id == "baseline" ? 2.0 : 3.0,
+      "peak_memory_bytes" => workload_id == "baseline" ? 400 : 700, "memory_limit_bytes" => 1_000,
+      "cpu_utilization_ratio" => workload_id == "baseline" ? 0.2 : 0.6,
+      "free_disk_bytes" => 500, "disk_total_bytes" => 1_000,
+      "io_wait_ratio" => workload_id == "baseline" ? 0.04 : 0.12,
+      "max_queue_depth" => workload_id == "baseline" ? 2 : 20,
+      "finality_seconds_p95" => workload_id == "baseline" ? 2.0 : 4.0,
+      "recovery_seconds" => 2.0, "recovery_confirmed" => true, "reset_confirmed" => true,
+      "artifact_sha256" => artifact
+    }
   end
 
   def canonical_sha256(value)

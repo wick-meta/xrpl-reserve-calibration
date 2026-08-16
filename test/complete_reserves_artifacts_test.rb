@@ -89,6 +89,24 @@ class CompleteReservesArtifactsTest < Minitest::Test
     assert_equal schedule.fetch("security_config_sha256"), security.fetch("security_config_sha256")
     assert_equal "complete-reserves-full-matrix-v1", security.fetch("profile_id")
     assert_equal false, security.fetch("execution_authorized")
+
+    verified = XrplReserveStudy::CompleteReservesArtifacts.new.verify_planning_bundle(
+      schedule_sha256: schedule.fetch("schedule_sha256")
+    )
+    assert_equal estimate, verified.fetch("benchmark")
+    assert_equal schedule, verified.fetch("schedule")
+    assert_equal security, verified.fetch("security")
+    assert_equal bindings, verified.fetch("bindings")
+
+    changed = Marshal.load(Marshal.dump(schedule))
+    changed.fetch("items").first["warmup_seconds"] = 1
+    File.binwrite(File.join(output, "schedule.json"), JSON.pretty_generate(changed) + "\n")
+    rewrite_sums(output)
+    assert_raises(XrplReserveStudy::CompleteReservesArtifactsError) do
+      XrplReserveStudy::CompleteReservesArtifacts.new.verify_planning_bundle(
+        schedule_sha256: schedule.fetch("schedule_sha256")
+      )
+    end
   ensure
     FileUtils.rm_rf(output) if output&.start_with?(XrplReserveStudy::RuntimePublisher::RUNTIME_ROOT + File::SEPARATOR)
   end
@@ -181,11 +199,21 @@ class CompleteReservesArtifactsTest < Minitest::Test
 
   private
 
+  def rewrite_sums(output)
+    names = %w[benchmark.json bindings.json schedule.json security.json]
+    File.binwrite(
+      File.join(output, "SHA256SUMS"),
+      names.map { |name| "#{Digest::SHA256.file(File.join(output, name)).hexdigest}  #{name}\n" }.join
+    )
+  end
+
   def execution_item
     {
       "run_id" => "cal-a000000002-o000000020-r98",
       "profile_id" => "complete-reserves-calibrated-v1", "profile_sha256" => "e" * 64,
       "schedule_sha256" => "b" * 64, "schedule_item_sha256" => "1" * 64,
+      "benchmark_sha256" => "8" * 64, "planning_security_sha256" => "7" * 64,
+      "planning_bindings_sha256" => "6" * 64,
       "security_config_sha256" => XrplReserveStudy::SecurityWorkload.new.security_config_sha256,
       "distribution_sha256" => "d" * 64, "candidate_sha256" => "c" * 64,
       "network_scope" => "isolated-network-only", "counted_run" => false,

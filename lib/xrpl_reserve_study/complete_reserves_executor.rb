@@ -113,6 +113,7 @@ module XrplReserveStudy
     SHA256 = /\A[0-9a-f]{64}\z/
     ITEM_KEYS = %w[
       schema_version run_id repetition profile_id profile_sha256 schedule_sha256 schedule_item_sha256
+      benchmark_sha256 planning_security_sha256 planning_bindings_sha256
       security_config_sha256 distribution_sha256 candidate_sha256 network_scope account_root_target
       owned_object_target base_reserve_drops owner_reserve_drops fee_headroom_drops_per_step
       warmup_seconds measurement_seconds execution_limits status counted_run execution_authorized
@@ -127,8 +128,7 @@ module XrplReserveStudy
     CALIBRATED_PROFILE = "complete-reserves-calibrated-v1"
     FULL_PROFILE = "complete-reserves-full-matrix-v1"
 
-    def initialize(snapshot_provider:, clone_manager:, runtime:, artifacts:,
-                   authorization: CompleteReservesAuthorization.new,
+    def initialize(snapshot_provider:, clone_manager:, runtime:, artifacts:, planning_artifacts:,
                    security: SecurityWorkload.new,
                    recipe_registry: OwnerObjectRecipeRegistry.new,
                    profile_path: PROFILE_PATH)
@@ -136,7 +136,7 @@ module XrplReserveStudy
       @clone_manager = clone_manager
       @runtime = runtime
       @artifacts = artifacts
-      @authorization = authorization
+      @planning_artifacts = planning_artifacts
       @security = security
       @recipe_registry = recipe_registry
       @profile_sha256 = Digest::SHA256.file(profile_path).hexdigest
@@ -147,6 +147,8 @@ module XrplReserveStudy
 
     def run(item:, secret_reader:, resume_record: nil)
       prepared = validate_item!(item)
+      planning = @planning_artifacts.verify_planning_bundle(schedule_sha256: prepared.fetch("schedule_sha256"))
+      validate_planning_gate!(prepared, planning)
       identity = validate_private_identity!
       validate_security_contract!
       return resume!(prepared, resume_record) if resume_record
@@ -208,7 +210,7 @@ module XrplReserveStudy
               %i[prepare start].all? { |method| @clone_manager.respond_to?(method) } &&
               %i[private_network_identity warmup run_security_workload recover! reset!].all? { |method| @runtime.respond_to?(method) } &&
               %i[publish_execution_bundle verify_execution_resume].all? { |method| @artifacts.respond_to?(method) } &&
-              @authorization.respond_to?(:authorize!) && @security.instance_of?(SecurityWorkload) &&
+              @planning_artifacts.instance_of?(CompleteReservesArtifacts) && @security.instance_of?(SecurityWorkload) &&
               @recipe_registry.instance_of?(OwnerObjectRecipeRegistry)
       reject!("invalid complete reserves execution dependency") unless valid
     end
@@ -221,20 +223,55 @@ module XrplReserveStudy
               item["network_scope"] == "isolated-network-only" && item["status"] == "pending" &&
               text?(item["run_id"], /\Acal-a[0-9]{9}-o[0-9]{9}-r[0-9]{2}\z/) &&
               item["repetition"].is_a?(Integer) && item["repetition"].positive? &&
-              %w[schedule_sha256 distribution_sha256 candidate_sha256 study_sha256 config_sha256 source_sha256 ledger_hash].all? { |key| sha?(item[key]) } &&
+              %w[schedule_sha256 benchmark_sha256 planning_security_sha256 planning_bindings_sha256 distribution_sha256 candidate_sha256 study_sha256 config_sha256 source_sha256 ledger_hash].all? { |key| sha?(item[key]) } &&
               item["snapshot_id"].is_a?(String) && item["snapshot_id"].match?(/\A[a-z0-9-]+\z/) &&
               positive_integer?(item["ledger_index"]) &&
               item["security_config_sha256"] == @security.security_config_sha256 &&
               item["schedule_item_sha256"] == canonical_sha256(item.reject { |key, _| key == "schedule_item_sha256" }) &&
               %w[account_root_target owned_object_target base_reserve_drops owner_reserve_drops fee_headroom_drops_per_step warmup_seconds measurement_seconds].all? { |key| positive_integer?(item[key]) } &&
-              valid_limits?(item["execution_limits"]) && boolean?(item["counted_run"]) && boolean?(item["execution_authorized"])
+              valid_limits?(item["execution_limits"]) && item["counted_run"] == false && item["execution_authorized"] == false
       reject!("invalid complete reserves execution item") unless valid
-
-      if item.fetch("counted_run") || item.fetch("execution_authorized")
-        @authorization.authorize!
-        reject!("counted execution requires explicit authorization") unless item.fetch("counted_run") && item.fetch("execution_authorized")
-      end
       deep_freeze(deep_copy(item))
+    end
+
+    def validate_planning_gate!(item, planning)
+      valid = planning.is_a?(Hash) && planning.keys.sort == %w[artifact_sha256 benchmark bindings schedule security] &&
+        planning["benchmark"].is_a?(Hash) && planning["bindings"].is_a?(Hash) &&
+        planning["schedule"].is_a?(Hash) && planning["security"].is_a?(Hash) && planning["artifact_sha256"].is_a?(Hash)
+      reject!("verified complete reserves planning bundle is required") unless valid
+      benchmark = planning.fetch("benchmark")
+      bindings = planning.fetch("bindings")
+      schedule = planning.fetch("schedule")
+      security = planning.fetch("security")
+      artifacts = planning.fetch("artifact_sha256")
+      measured_pairs = benchmark.fetch("measured_samples").select do |sample|
+        [10_000, 25_000, 50_000].include?(sample["account_root_target"]) && sample["measurement_source"] == "observed"
+      end.map { |sample| [sample.fetch("account_root_target"), sample.fetch("owned_object_target")] }
+      exact = benchmark.fetch("profile_id") == FULL_PROFILE && benchmark.fetch("profile_sha256") == item.fetch("profile_sha256") &&
+        benchmark.fetch("benchmark_sha256") == item.fetch("benchmark_sha256") &&
+        benchmark.fetch("distribution_sha256") == item.fetch("distribution_sha256") &&
+        benchmark.fetch("candidate_sha256") == item.fetch("candidate_sha256") &&
+        benchmark.fetch("timed_floor_seconds") == ProvisioningBenchmark::TIMED_FLOOR_SECONDS &&
+        benchmark.fetch("provisioning_bounded") == false && benchmark.fetch("completion_seconds").nil? &&
+        schedule.fetch("profile_id") == FULL_PROFILE && schedule.fetch("profile_sha256") == item.fetch("profile_sha256") &&
+        schedule.fetch("schedule_sha256") == item.fetch("schedule_sha256") && schedule.fetch("benchmark_sha256") == item.fetch("benchmark_sha256") &&
+        schedule.fetch("security_config_sha256") == item.fetch("security_config_sha256") &&
+        schedule.fetch("distribution_sha256") == item.fetch("distribution_sha256") && schedule.fetch("candidate_sha256") == item.fetch("candidate_sha256") &&
+        schedule.fetch("timed_floor_seconds") == ProvisioningBenchmark::TIMED_FLOOR_SECONDS && schedule.fetch("items").length == 120 &&
+        schedule.fetch("network_scope") == "isolated-network-only" && schedule.fetch("counted_run") == false && schedule.fetch("execution_authorized") == false &&
+        security.fetch("profile_id") == FULL_PROFILE && security.fetch("profile_sha256") == item.fetch("profile_sha256") &&
+        security.fetch("security_config_sha256") == item.fetch("security_config_sha256") && security.fetch("security_sha256") == item.fetch("planning_security_sha256") &&
+        security.fetch("distribution_sha256") == item.fetch("distribution_sha256") && security.fetch("candidate_sha256") == item.fetch("candidate_sha256") &&
+        security.fetch("passed") == true && security.fetch("failed_gates") == [] && security.fetch("network_scope") == "isolated-network-only" &&
+        security.fetch("counted_run") == false && security.fetch("execution_authorized") == false &&
+        bindings.fetch("benchmark_sha256") == item.fetch("benchmark_sha256") && bindings.fetch("schedule_sha256") == item.fetch("schedule_sha256") &&
+        bindings.fetch("security_sha256") == item.fetch("planning_security_sha256") &&
+        artifacts.fetch("bindings.json") == item.fetch("planning_bindings_sha256") &&
+        measured_pairs.length == 3 && measured_pairs.map(&:first).sort == [10_000, 25_000, 50_000] &&
+        measured_pairs.include?([item.fetch("account_root_target"), item.fetch("owned_object_target")])
+      reject!("execution item is not bound to the verified planning bundle") unless exact
+    rescue KeyError, TypeError
+      reject!("verified complete reserves planning bundle is required")
     end
 
     def validate_private_identity!
@@ -346,6 +383,9 @@ module XrplReserveStudy
         "status" => "passed", "profile_id" => item.fetch("profile_id"),
         "profile_sha256" => item.fetch("profile_sha256"), "schedule_sha256" => item.fetch("schedule_sha256"),
         "schedule_item_sha256" => item.fetch("schedule_item_sha256"),
+        "benchmark_sha256" => item.fetch("benchmark_sha256"),
+        "planning_security_sha256" => item.fetch("planning_security_sha256"),
+        "planning_bindings_sha256" => item.fetch("planning_bindings_sha256"),
         "security_config_sha256" => item.fetch("security_config_sha256"),
         "distribution_sha256" => item.fetch("distribution_sha256"), "candidate_sha256" => item.fetch("candidate_sha256"),
         "snapshot_id" => snapshot.fetch("snapshot_id"), "ledger" => snapshot.fetch("ledger"),
