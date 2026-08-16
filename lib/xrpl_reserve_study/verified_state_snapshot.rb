@@ -78,7 +78,9 @@ module XrplReserveStudy
     def verify!(snapshot)
       public = validate_snapshot_record!(snapshot)
       path = public.fetch("path")
-      stored = JSON.parse(File.binread(File.join(path, "snapshot.json")))
+      record_path = File.join(path, "snapshot.json")
+      raise VerifiedStateSnapshotError, "snapshot record is not a regular file" unless File.lstat(record_path).file?
+      stored = JSON.parse(File.binread(record_path))
       expected = public.reject { |key, _| %w[path directory_binding].include?(key) }
       raise VerifiedStateSnapshotError, "snapshot record does not match image" unless stored == expected
       actual = safe_manifest!(File.join(path, "state"))

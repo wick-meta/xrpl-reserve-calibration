@@ -142,6 +142,18 @@ class VerifiedStateSnapshotTest < Minitest::Test
     assert_equal "invalid complete reserves seed result", error.message
   end
 
+  # Break caught: a matching snapshot.json reached through a symlink was treated as the published record.
+  def test_rejects_a_symlinked_snapshot_record
+    snapshot = @publisher.publish(identity: identity, seed_result: seed_result)
+    record = File.join(snapshot.fetch("path"), "snapshot.json")
+    replacement = File.join(@runtime_root, "replacement-record.json")
+    File.rename(record, replacement)
+    FileUtils.ln_s(replacement, record)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) { @publisher.verify!(snapshot) }
+    assert_equal "snapshot record is not a regular file", error.message
+  end
+
   private
 
   def identity
