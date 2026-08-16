@@ -1,5 +1,11 @@
 # Phase 2 harness foundation verification
 
+> **Historical / superseded:** This review records the earlier 3.2.1 harness
+> foundation. The current candidate is 3.3.0 and its non-counted pilot is
+> documented in [the committed pilot review](phase-2-native-pilot-review.md).
+> This file is retained for provenance and must not be pooled with current
+> candidate evidence or treated as counted capacity readiness.
+
 This review records the earlier 3.2.1 harness snapshot for provenance. The
 current reserve candidate is 3.3.0; its Sponsor-specific calibration state is
 documented in [the supplemental plan](../sponsor-calibration-plan-v1.md) and
