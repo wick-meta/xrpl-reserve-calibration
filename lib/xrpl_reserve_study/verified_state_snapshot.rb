@@ -36,22 +36,7 @@ module XrplReserveStudy
       "endpoint", "secret", "seed", "private_key", "private-key", "private key", "master_key", "master-key", "master key"
     ].freeze
     IDENTITY_ENCODINGS = [Encoding::UTF_8, Encoding::UTF_16LE, Encoding::UTF_16BE, Encoding::UTF_32LE, Encoding::UTF_32BE].freeze
-    CONTROL_SEPARATED_IDENTITY_PATTERNS = IDENTITY_ENCODINGS.map do |encoding|
-      encoded_tokens = Regexp.union(IDENTITY_TOKENS.map { |token| token.encode(encoding).b }).source
-      separator_and_value = case encoding
-                            when Encoding::UTF_8
-                              "(?:[\\x00-\\x1f\\x7f])+[\\x20-\\x7e]"
-                            when Encoding::UTF_16LE
-                              "(?:[\\x00-\\x1f\\x7f]\\x00)+[\\x20-\\x7e]\\x00"
-                            when Encoding::UTF_16BE
-                              "(?:\\x00[\\x00-\\x1f\\x7f])+\\x00[\\x20-\\x7e]"
-                            when Encoding::UTF_32LE
-                              "(?:[\\x00-\\x1f\\x7f]\\x00\\x00\\x00)+[\\x20-\\x7e]\\x00\\x00\\x00"
-                            when Encoding::UTF_32BE
-                              "(?:\\x00\\x00\\x00[\\x00-\\x1f\\x7f])+\\x00\\x00\\x00[\\x20-\\x7e]"
-                            end
-      Regexp.new("(?:#{encoded_tokens})#{separator_and_value}", Regexp::IGNORECASE, "n")
-    end.freeze
+    PLAUSIBLE_IDENTITY_VALUE = /\A[^A-Za-z0-9]*[A-Za-z0-9][A-Za-z0-9._-]{0,127}/
     SEED_RESULT_KEYS = %w[schema_version profile_id cell_id counted_run elapsed_seconds attempted_transactions validated_transactions burned_fee_drops locked_xrp_drops released_xrp_drops finality classified_ledger_evidence resource_snapshots].freeze
 
     def initialize(runtime:, runtime_root: RuntimePublisher::RUNTIME_ROOT)
@@ -369,7 +354,6 @@ module XrplReserveStudy
 
     def reject_state_bytes!(bytes, name:)
       raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless bytes.is_a?(String) && !bytes.empty?
-      reject_binary_identity!(bytes)
       case name
       when "nudb/nudb.dat" then parse_nudb_dat!(bytes)
       when "nudb/nudb.key" then parse_nudb_key!(bytes)
@@ -416,6 +400,9 @@ module XrplReserveStudy
         size = uint48(bytes.byteslice(offset, 6))
         offset += 6
         if size.positive?
+          payload = bytes.byteslice(offset + key_size, size)
+          raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless payload&.bytesize == size
+          reject_binary_identity!(payload)
           offset += key_size + size
         else
           raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" if bytes.bytesize - offset < 2
@@ -462,10 +449,42 @@ module XrplReserveStudy
     def reject_binary_identity!(bytes)
       lowered = bytes.downcase
       collapsed = lowered.delete("\0")
-      control_separated_identity = CONTROL_SEPARATED_IDENTITY_PATTERNS.any? { |pattern| lowered.match?(pattern) }
-      if lowered.match?(BINARY_IDENTITY_ASSIGNMENT) || collapsed.match?(BINARY_IDENTITY_ASSIGNMENT) || control_separated_identity
+      if lowered.match?(BINARY_IDENTITY_ASSIGNMENT) || collapsed.match?(BINARY_IDENTITY_ASSIGNMENT) || semantic_identity?(lowered)
         raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
       end
+    end
+
+    def semantic_identity?(bytes)
+      IDENTITY_ENCODINGS.any? do |encoding|
+        IDENTITY_TOKENS.any? do |token|
+          encoded_token = token.encode(encoding).b
+          search_from = 0
+          matched = false
+          while (index = bytes.index(encoded_token, search_from))
+            suffix = bytes.byteslice(index + encoded_token.bytesize, 1024) || "".b
+            if decoded_identity_suffix(suffix, encoding).match?(PLAUSIBLE_IDENTITY_VALUE)
+              matched = true
+              break
+            end
+            search_from = index + 1
+          end
+          matched
+        end
+      end
+    end
+
+    def decoded_identity_suffix(bytes, encoding)
+      unit = case encoding
+             when Encoding::UTF_16LE, Encoding::UTF_16BE then 2
+             when Encoding::UTF_32LE, Encoding::UTF_32BE then 4
+             else 1
+             end
+      aligned = bytes.byteslice(0, bytes.bytesize - bytes.bytesize.modulo(unit))
+      value = aligned.dup.force_encoding(encoding)
+      return value.scrub("?") if encoding == Encoding::UTF_8
+      value.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: "?")
+    rescue Encoding::InvalidByteSequenceError, Encoding::UndefinedConversionError
+      ""
     end
 
     def zero_bytes?(bytes)

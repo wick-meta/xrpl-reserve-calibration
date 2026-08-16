@@ -328,6 +328,40 @@ class VerifiedStateSnapshotTest < Minitest::Test
     end
   end
 
+  # Break caught: printable delimiters were outside the control-separator scrubber.
+  def test_rejects_pipe_delimited_identity_inside_valid_nudb_record
+    add_nudb_record("machine_id|operator-7".b)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
+  # Break caught: delimiter choice, including no delimiter, must not change semantic identity rejection.
+  def test_rejects_printable_punctuation_identity_variants_in_valid_nudb_records
+    ["|", ".", "/", ",", ";", " ", ""].each do |delimiter|
+      write_minimal_nudb_state(@state)
+      add_nudb_record("machine_id#{delimiter}operator-7".b)
+
+      assert_raises(XrplReserveStudy::VerifiedStateSnapshotError, delimiter.inspect) do
+        @publisher.publish(identity: identity, seed_result: seed_result)
+      end
+    end
+  end
+
+  # Break caught: printable-delimiter semantics must be identical in UTF-8, UTF-16, and UTF-32 payloads.
+  def test_rejects_encoded_pipe_delimited_identities_in_valid_nudb_records
+    %w[UTF-8 UTF-16LE UTF-16BE UTF-32LE UTF-32BE].each do |encoding|
+      write_minimal_nudb_state(@state)
+      add_nudb_record("endpoint|node-7".encode(encoding).b)
+
+      assert_raises(XrplReserveStudy::VerifiedStateSnapshotError, encoding) do
+        @publisher.publish(identity: identity, seed_result: seed_result)
+      end
+    end
+  end
+
   # Break caught: peer discovery endpoints are local cache data, not ledger state, and must not enter clones.
   def test_validates_then_scrubs_peerfinder_sqlite_cache
     File.binwrite(File.join(@state, "peerfinder.sqlite"), minimal_sqlite_database)
