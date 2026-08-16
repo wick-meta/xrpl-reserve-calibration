@@ -362,6 +362,17 @@ class VerifiedStateSnapshotTest < Minitest::Test
     end
   end
 
+  # Break caught: semantic scanning covered NuDB values but not the fixed-width record key bytes.
+  def test_rejects_semantic_identity_inside_valid_nudb_record_key
+    record_key = "machine_id=operator-7".ljust(32, "\0").b
+    add_nudb_record("safe-ledger-value".b, key_bytes: record_key)
+
+    error = assert_raises(XrplReserveStudy::VerifiedStateSnapshotError) do
+      @publisher.publish(identity: identity, seed_result: seed_result)
+    end
+    assert_equal "runtime state violates strict artifact policy", error.message
+  end
+
   # Break caught: peer discovery endpoints are local cache data, not ledger state, and must not enter clones.
   def test_validates_then_scrubs_peerfinder_sqlite_cache
     File.binwrite(File.join(@state, "peerfinder.sqlite"), minimal_sqlite_database)
@@ -412,11 +423,12 @@ class VerifiedStateSnapshotTest < Minitest::Test
     bytes.b
   end
 
-  def add_nudb_record(payload)
+  def add_nudb_record(payload, key_bytes: "k" * 32)
+    raise ArgumentError, "NuDB fixture key must be 32 bytes" unless key_bytes.bytesize == 32
     dat_path = File.join(@state, "nudb", "nudb.dat")
     dat = File.binread(dat_path)
     data_offset = dat.bytesize
-    File.binwrite(dat_path, dat + uint48_bytes(payload.bytesize) + ("k" * 32) + payload)
+    File.binwrite(dat_path, dat + uint48_bytes(payload.bytesize) + key_bytes + payload)
 
     key_path = File.join(@state, "nudb", "nudb.key")
     key = File.binread(key_path)

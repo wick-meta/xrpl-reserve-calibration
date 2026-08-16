@@ -400,8 +400,12 @@ module XrplReserveStudy
         size = uint48(bytes.byteslice(offset, 6))
         offset += 6
         if size.positive?
+          record_key = bytes.byteslice(offset, key_size)
           payload = bytes.byteslice(offset + key_size, size)
-          raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy" unless payload&.bytesize == size
+          unless record_key&.bytesize == key_size && payload&.bytesize == size
+            raise VerifiedStateSnapshotError, "runtime state violates strict artifact policy"
+          end
+          reject_binary_identity!(record_key)
           reject_binary_identity!(payload)
           offset += key_size + size
         else
