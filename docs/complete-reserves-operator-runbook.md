@@ -18,6 +18,13 @@ Devnet, or a public RPC endpoint.
 | Calibration execution | Guarded three-cell executor library with security workloads, recovery, reset, resume, and artifact publication | No live operator runtime adapter or execution CLI is included |
 | Full matrix | Frozen 120-item profile and secret-free planning CLI | Execution is hard-disabled and unauthorized |
 
+The operator must also run the separate
+[`account-delete-lifecycle-v1`](../study/account-delete-lifecycle-v1.yml)
+conformance contract before treating cleanup economics as reserve evidence. It
+is isolated-only, non-counted, and authorization-disabled. Record both a
+successful deletion and validated failure cases, keeping the special burned
+AccountDelete fee separate from base and owner reserve measurements.
+
 ## 1. Validate a clean clone
 
 Requirements are Ruby 3.3 or newer and, for private-network runtime work,

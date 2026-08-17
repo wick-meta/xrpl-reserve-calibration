@@ -21,6 +21,13 @@ addresses, and credentials remain outside the repository and generated bundle.
 
 Capacity work must use disposable, isolated networks with no route to production credentials. Runtime containment enforces resource ceilings and an explicit network identity check. The earlier base-reserve workload preparation creates keyless synthetic AccountIDs. Complete-reserves population construction instead uses an ephemeral deterministic signer pool because AccountRoots and owner objects must be created through validated transactions. Those signer values exist only in mutable process memory, are wiped after each use, and cross only the verified loopback HTTPS/mTLS private-network channel; they are never committed or published.
 
+AccountDelete conformance is a separate transaction-capable lifecycle. It must
+remain isolated-only, non-counted, and authorization-disabled; its special
+burned fee must not be treated as a base- or owner-reserve refund. Operators
+must capture validated success and failure outcomes, blockers, OwnerCount
+release, balance transfer, cleanup finality, reset, recovery, and state-growth
+metrics.
+
 Complete-reserves execution additionally requires exact membership in a
 checksummed calibration plan, a private-network identity bound to the pinned
 candidate, an exact-ledger verified snapshot, a run-and-repetition-bound
