@@ -59,6 +59,27 @@ and operator-selected transaction endpoints are prohibited. Results inform the
 economic anti-spam and operational state-growth trade-off; they do not, on their
 own, establish overall XRPL security or justify a reserve-policy change.
 
+### AccountDelete lifecycle and deletion cost
+
+Account deletion is a separate conformance lifecycle, not another reserve
+multiplier in the 120-run matrix. The `account-delete-lifecycle-v1` contract
+requires an isolated, non-counted, authorization-disabled run that records the
+base reserve, owner reserve increment, `OwnerCount` before and after cleanup,
+deletion blockers, balance transferred, the special AccountDelete fee and the
+amount actually burned. The fee must be at least one owner-reserve increment;
+it is not the base reserve and is not a refund of all owner reserve.
+
+The lifecycle must cover both a successful deletion and validated failure cases
+such as obligations, too many objects, sequence-too-soon, destination, or
+permission errors. A success is admissible only when blockers are absent,
+`OwnerCount` reaches zero, cleanup reaches finality, and the account-delete
+result is `tesSUCCESS`. A failed deletion still records the burned fee when it
+was included in a validated ledger. Operators must also bind the sequence/replay
+rule, exact validated ledger, reset/recovery, ledger/database growth, close
+time, and finality metrics. These observations quantify create/delete churn and
+cleanup economics; they do not authorize counted execution or a reserve-policy
+recommendation.
+
 ### Execution readiness and staged enablement
 
 The 120-run matrix has a fixed serial timed minimum of 70 hours: each run has
