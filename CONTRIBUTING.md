@@ -35,6 +35,13 @@ disk/I/O, close-time, finality, transaction outcomes, reset, and recovery.
 These measurements inform anti-spam trade-offs but do not by themselves prove
 network security or justify a reserve-policy change.
 
+AccountDelete must be contributed as the separate non-counted lifecycle in
+[`study/account-delete-lifecycle-v1.yml`](study/account-delete-lifecycle-v1.yml).
+Do not fold its special burned fee into the base or owner reserve. Record both
+successful deletion and validated failure cases, including blockers, the
+1,000-object limit, sequence replay protection, `OwnerCount` release, balance
+transfer, cleanup finality, ledger/database deltas, reset, and recovery.
+
 The current evidence prerequisite is a frozen current-state distribution for
 one validated ledger. One declared operator may create an `operator_local`
 bundle and use it for a reproducible local study. A matching report from

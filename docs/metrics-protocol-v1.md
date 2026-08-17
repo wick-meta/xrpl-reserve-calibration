@@ -180,3 +180,12 @@ and deletion/release. Each record contains observed balance and `OwnerCount`
 transitions, terminal finality, and cleanup finality. These conformance records
 are non-counted implementation evidence; public network submission is
 prohibited.
+
+The deletion/release case is specified separately by
+`study/account-delete-lifecycle-v1.yml` and
+`schemas/account-delete-observation-v1.schema.json`. It must distinguish the
+base reserve, owner-reserve release, and AccountDelete's special burned fee;
+the latter is at least one owner-reserve increment and is charged even for a
+validated deletion failure. It also records deletion blockers, the 1,000-object
+limit, the sequence replay guard, balance transfer, cleanup finality, and
+ledger/database deltas. It remains non-counted and authorization-disabled.

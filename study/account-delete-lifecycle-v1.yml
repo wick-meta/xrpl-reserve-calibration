@@ -1,0 +1,34 @@
+schema_version: account-delete-lifecycle-v1
+workload_id: account-delete-lifecycle
+network_scope: isolated-network-only
+counted_run: false
+execution_authorized: false
+special_fee_rule: one-owner-reserve-increment
+max_owned_objects: 1000
+sequence_replay_rule: sequence_plus_255_lte_validated_ledger_index
+required_results:
+  success: tesSUCCESS
+  failures:
+    - tecHAS_OBLIGATIONS
+    - tefTOO_BIG
+    - tecTOO_SOON
+    - tecNO_DST
+    - tecDST_TAG_NEEDED
+    - tecNO_PERMISSION
+required_metrics:
+  - fee_drops
+  - fee_burned_drops
+  - reserve_increment_drops
+  - base_reserve_drops
+  - owner_count_before
+  - owner_count_after
+  - deletion_blockers_before
+  - cleanup_finality
+  - balance_before_drops
+  - balance_transferred_drops
+  - ledger_growth_bytes
+  - database_growth_bytes
+  - close_time_seconds
+  - finality_seconds
+  - reset_confirmed
+  - recovery_confirmed

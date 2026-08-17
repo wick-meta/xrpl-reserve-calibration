@@ -24,6 +24,13 @@ inform the spam-resistance and state-growth trade-off; they cannot prove network
 security by themselves, and no study transaction may target Mainnet, Testnet,
 Devnet, or a public endpoint.
 
+Account deletion is treated as a separate lifecycle cost, not as another base
+or owner-reserve multiplier. The conformance contract records the special
+AccountDelete fee burned (at least one owner-reserve increment), deletion
+blockers, the 1,000-object limit, sequence replay protection, `OwnerCount`
+release, balance transfer, cleanup finality, and ledger/database effects. It is
+non-counted and authorization-disabled until an operator validates it.
+
 Complete-reserves calibration uses a hash-pinned current-state distribution
 covering both AccountRoot and owner-reserve objects. A serial public-RPC
 full-tree scan is supported as a correctness reference but is not the
