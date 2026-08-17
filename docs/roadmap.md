@@ -56,15 +56,18 @@ limits; a partial scan cannot satisfy this phase.
 4. Review the live calibration's equivalence, resource ceilings, transaction
    limits, reset/recovery, resume, and artifact integrity. Consider a separate
    authorization change only after this gate passes.
-5. If separately authorized, execute the predeclared 120-run matrix: 48
+5. Run the isolated, non-counted AccountDelete lifecycle contract and retain
+   its success/failure, fee-burn, blocker, OwnerCount, transfer, cleanup, and
+   state-growth records separately from the matrix.
+6. If separately authorized, execute the predeclared 120-run matrix: 48
    base-reserve cells, 48 owner-reserve cells, and 24 combined corner cells,
    each repeated three times. Its timed warmup-and-measurement floor is 70
    serial hours, excluding measured provisioning, snapshot/clone, recovery,
    and retry time.
-6. Preserve successes, failures, exclusions, logs, metrics, environment
+7. Preserve successes, failures, exclusions, logs, metrics, environment
    manifests, and checksums. Do not pool results across candidate versions,
    profiles, or environments.
-7. Reproduce a representative subset on a second environment and state
+8. Reproduce a representative subset on a second environment and state
    whether it was maintainer-performed or independently performed.
 
 Exit gate: every planned run has a disposition, predeclared thresholds and

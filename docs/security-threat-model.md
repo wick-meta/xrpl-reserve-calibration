@@ -88,6 +88,13 @@ profile remains rejected by the guarded executor. The measured scheduler
 rejects inadequate CPU, memory, disk, or I/O declarations; planning output is
 not permission to execute.
 
+AccountDelete is also an anti-spam boundary: it burns at least one
+owner-reserve increment even when a validated deletion fails. A lifecycle
+adapter must cap attempts, distinguish `tesSUCCESS` from deletion blockers and
+other `tec`/`tef` outcomes, require validated finality, and never retry a
+charged failure as if no cost occurred. Its observations remain non-counted
+and isolated-only.
+
 ## Incorrect finality or evidence claims
 
 `status=success`, `accepted=true`, or `tesSUCCESS` from `submit` does not prove a validated result. The executor must advance the standalone ledger explicitly, query each transaction from a validated ledger, confirm `meta.TransactionResult=tesSUCCESS`, confirm the destination AccountRoot exists at the expected validated ledger, and record failures without converting them to success. Functional-smoke artifacts remain `counted_run=false` and cannot satisfy pilot or matrix gates.

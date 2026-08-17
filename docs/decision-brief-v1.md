@@ -25,6 +25,9 @@ not an estimate of safety or a rejection of any candidate reserve.
   its evidence is isolated, candidate-specific, and non-counted.
 - The complete-reserves design covers both AccountRoot base reserve and the
   owner reserve across separate base, owner, and combined checks.
+- AccountDelete is specified as a separate non-counted lifecycle: its special
+  burned fee, deletion blockers, OwnerCount release, balance transfer, and
+  cleanup/finality behavior are not folded into either reserve multiplier.
 - Deterministic builders, verified state snapshots and one-use clones,
   measured-only scheduling, security workloads, and a guarded three-cell
   calibration executor exist as tested implementation contracts.
@@ -34,6 +37,8 @@ not an estimate of safety or a rejection of any candidate reserve.
 ## Required but absent evidence
 
 - A hash-bound complete-reserves distribution from an indexed operator source.
+- A validated AccountDelete lifecycle bundle covering success, failure,
+  cleanup, fee burn, and state-growth measurements.
 - Observed 10k, 25k, and 50k provisioning samples and an explicit 1m checkpoint
   disposition.
 - Live operator-runtime integration and a realistic non-counted calibration.
